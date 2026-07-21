@@ -60,3 +60,31 @@ export const sales = sqliteTable(
     index("sales_org_pickup_idx").on(table.organizationCode, table.pickupNumber),
   ],
 );
+
+export const businessPartners = sqliteTable(
+  "business_partners",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    organizationCode: text("organization_code").notNull().default("USA"),
+    partnerType: text("partner_type").notNull(),
+    name: text("name").notNull(),
+    taxId: text("tax_id").notNull(),
+    blueBookNumber: text("blue_book_number").notNull(),
+    dunsNumber: text("duns_number").notNull(),
+    street: text("street").notNull(),
+    exteriorNumber: text("exterior_number").notNull(),
+    interiorNumber: text("interior_number"),
+    stateCode: text("state_code").notNull(),
+    stateName: text("state_name").notNull(),
+    city: text("city").notNull(),
+    postalCode: text("postal_code").notNull(),
+    contactName: text("contact_name").notNull(),
+    contactEmail: text("contact_email").notNull(),
+    contactPhone: text("contact_phone").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("partners_org_type_name_idx").on(table.organizationCode, table.partnerType, table.name),
+    index("partners_org_tax_id_idx").on(table.organizationCode, table.taxId),
+  ],
+);

@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { InventoryLot, Sale } from "../../lib/types";
+import type { BusinessPartner, InventoryLot, PartnerType, Sale } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const number = new Intl.NumberFormat("en-US");
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
+type Section = "dashboard" | "catalogs";
+type StateOption = { code: string; name: string };
 
 function localDateKey(date = new Date()) {
   const year = date.getFullYear();
@@ -30,6 +32,12 @@ const blankSale = {
   boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", shipDate: "", pickupDate: "",
 };
 
+const blankPartner = {
+  partnerType: "SUPPLIER" as PartnerType, name: "", taxId: "", blueBookNumber: "", dunsNumber: "",
+  street: "", exteriorNumber: "", interiorNumber: "", stateCode: "", stateName: "", city: "", postalCode: "",
+  contactName: "", contactEmail: "", contactPhone: "",
+};
+
 export default function UsaDashboard({ initialSales }: { initialSales: Sale[] }) {
   const [salesRows, setSalesRows] = useState<Sale[]>(initialSales);
   const [inventory, setInventory] = useState<InventoryLot[]>([]);
@@ -40,12 +48,85 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [modalStep, setModalStep] = useState<"closed" | "choose" | "form">("closed");
   const [form, setForm] = useState(blankSale);
   const [saveState, setSaveState] = useState("");
+  const [section, setSection] = useState<Section>("dashboard");
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [partnerTypeFilter, setPartnerTypeFilter] = useState<PartnerType>("SUPPLIER");
+  const [partnerModal, setPartnerModal] = useState<PartnerType | null>(null);
+  const [partnerForm, setPartnerForm] = useState(blankPartner);
+  const [partnerSaveState, setPartnerSaveState] = useState("");
+  const [states, setStates] = useState<StateOption[]>([]);
+  const [cities, setCities] = useState<string[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
       if (Array.isArray(data.sales)) setSalesRows(data.sales);
     }).catch(() => undefined);
   }, []);
+
+  async function loadPartners() {
+    try {
+      const response = await fetch("/api/usa/partners");
+      const data = await response.json();
+      if (Array.isArray(data.partners)) setPartners(data.partners);
+    } catch {
+      setPartners([]);
+    }
+  }
+
+  async function openCatalogs() {
+    setSection("catalogs");
+    await loadPartners();
+  }
+
+  async function openPartnerForm(type: PartnerType) {
+    setPartnerForm({ ...blankPartner, partnerType: type });
+    setPartnerSaveState("");
+    setCities([]);
+    setPartnerModal(type);
+    if (!states.length) {
+      try {
+        const response = await fetch("/api/usa/locations");
+        const data = await response.json();
+        if (Array.isArray(data.states)) setStates(data.states);
+      } catch {
+        setStates([]);
+      }
+    }
+  }
+
+  async function changePartnerState(code: string) {
+    const selected = states.find((state) => state.code === code);
+    setPartnerForm((current) => ({ ...current, stateCode: code, stateName: selected?.name ?? "", city: "" }));
+    setCities([]);
+    if (!code) return;
+    setCitiesLoading(true);
+    try {
+      const response = await fetch(`/api/usa/locations?state=${encodeURIComponent(code)}`);
+      const data = await response.json();
+      setCities(Array.isArray(data.cities) ? data.cities : []);
+    } catch {
+      setCities([]);
+    } finally {
+      setCitiesLoading(false);
+    }
+  }
+
+  async function savePartner(event: FormEvent) {
+    event.preventDefault();
+    setPartnerSaveState("Guardando…");
+    try {
+      const response = await fetch("/api/usa/partners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(partnerForm) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
+      setPartners((current) => [...current, data.partner].sort((a, b) => a.name.localeCompare(b.name)));
+      setPartnerTypeFilter(partnerForm.partnerType);
+      setPartnerModal(null);
+      setPartnerSaveState("");
+    } catch (error) {
+      setPartnerSaveState(error instanceof Error ? error.message : "No se pudo guardar.");
+    }
+  }
 
   async function loadInventory() {
     setInventoryLoading(true);
@@ -145,13 +226,13 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="mini-mark"><span /><span /></div><div><strong>NORWEST</strong><small>PRODUCE LLC</small></div></div>
         <nav>
-          <a className="nav-item active"><span>▦</span> Resumen</a><a className="nav-item"><span>↗</span> Ventas</a><a className="nav-item"><span>▤</span> Cargas</a>
-          <a className="nav-item"><span>□</span> Facturación</a><a className="nav-item"><span>◎</span> Cartera</a><a className="nav-item"><span>◇</span> Catálogos</a><a className="nav-item"><span>⌁</span> Reportes</a>
+          <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button><a className="nav-item"><span>↗</span> Ventas</a><a className="nav-item"><span>▤</span> Cargas</a>
+          <a className="nav-item"><span>□</span> Facturación</a><a className="nav-item"><span>◎</span> Cartera</a><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a>
         </nav>
         <div className="sidebar-bottom"><div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div><Link href="/">⇄ Cambiar empresa</Link></div>
       </aside>
 
-      <section className="erp-content">
+      {section === "dashboard" ? <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Ventas y operaciones</h1></div><div className="topbar-actions"><button className="icon-button" aria-label="Notificaciones">♢<i /></button><button className="primary-button" onClick={openNewSale}>＋ Nueva venta</button></div></header>
         <section className="summary-grid">
           <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Vendido hoy</p><strong>{money.format(totals.todaySales)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthSales)}</b></span></article>
@@ -175,7 +256,33 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
               <td><span className={overdue != null && overdue > 0 ? "overdue" : ""}>{formatDate(row.dueDate)}</span>{overdue != null && overdue > 0 && <small>{overdue} días</small>}</td>
             </tr>; })}</tbody></table></div>
         </section>
-      </section>
+      </section> : <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Clientes y proveedores</h1></div></header>
+        <section className="catalog-summary">
+          <button className={`catalog-type-card ${partnerTypeFilter === "SUPPLIER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("SUPPLIER")}><span className="catalog-icon">⇄</span><div><strong>Proveedores</strong><small>{partners.filter((partner) => partner.partnerType === "SUPPLIER").length} registrados</small></div></button>
+          <button className={`catalog-type-card ${partnerTypeFilter === "CUSTOMER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("CUSTOMER")}><span className="catalog-icon customer">◎</span><div><strong>Clientes</strong><small>{partners.filter((partner) => partner.partnerType === "CUSTOMER").length} registrados</small></div></button>
+        </section>
+        <section className="sales-panel catalog-panel">
+          <div className="panel-heading"><div><h2>{partnerTypeFilter === "SUPPLIER" ? "Proveedores" : "Clientes"}</h2><p>Catálogo exclusivo de la operación USA</p></div><button className="primary-button" onClick={() => void openPartnerForm(partnerTypeFilter)}>＋ Alta de {partnerTypeFilter === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
+          <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>TAX ID #</th><th>Blue Book #</th><th>DUNS & Bradstreet #</th><th>Dirección</th><th>{partnerTypeFilter === "SUPPLIER" ? "Contacto para pagos" : "Contacto para cobros"}</th></tr></thead>
+            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.taxId}</td><td>{partner.blueBookNumber}</td><td>{partner.dunsNumber}</td><td><strong>{partner.street} {partner.exteriorNumber}{partner.interiorNumber ? ` Int. ${partner.interiorNumber}` : ""}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td><td><strong>{partner.contactName}</strong><small>{partner.contactEmail} · {partner.contactPhone}</small></td></tr>)}</tbody></table></div>
+          {partners.filter((partner) => partner.partnerType === partnerTypeFilter).length === 0 && <div className="catalog-empty"><strong>Aún no hay {partnerTypeFilter === "SUPPLIER" ? "proveedores" : "clientes"} registrados</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
+        </section>
+      </section>}
+
+      {partnerModal && <div className="modal-backdrop" onMouseDown={() => setPartnerModal(null)}><form className="sale-modal partner-modal" onSubmit={savePartner} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Alta de {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios para registrar.</p></div><button type="button" onClick={() => setPartnerModal(null)} aria-label="Cerrar">×</button></div>
+        <section className="form-section partner-section"><div className="form-section-heading"><span>1</span><div><h3>Información fiscal y comercial</h3></div></div><div className="form-grid partner-grid">
+          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>TAX ID # *<input required value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK # *<input required value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET # *<input required value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>
+        </div></section>
+        <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3><p>Selecciona primero el estado para habilitar sus ciudades.</p></div></div><div className="form-grid partner-grid">
+          <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle *<input required value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior *<input required value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
+        </div></section>
+        <section className="form-section contact-section"><div className="form-section-heading"><span>3</span><div><h3>Contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"}</h3></div></div><div className="form-grid partner-grid">
+          <label>Nombre de contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required value={partnerForm.contactName} onChange={(e) => setPartnerForm({...partnerForm, contactName:e.target.value})} /></label><label>Correo para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="email" value={partnerForm.contactEmail} onChange={(e) => setPartnerForm({...partnerForm, contactEmail:e.target.value})} /></label><label>Teléfono para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="tel" value={partnerForm.contactPhone} onChange={(e) => setPartnerForm({...partnerForm, contactPhone:e.target.value})} /></label>
+        </div></section>
+        {partnerSaveState && <p className="form-message">{partnerSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setPartnerModal(null)}>Cancelar</button><button type="submit" className="primary-button">Registrar {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
+      </form></div>}
 
       {modalStep !== "closed" && <div className="modal-backdrop" onMouseDown={closeModal}>
         {modalStep === "choose" ? <section className="sale-modal operation-modal" onMouseDown={(event) => event.stopPropagation()}>

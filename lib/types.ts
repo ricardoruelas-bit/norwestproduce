@@ -44,3 +44,28 @@ export type InventoryLot = {
   availableBoxes: number;
   unitCost: number | null;
 };
+
+export type PartnerType = "SUPPLIER" | "CUSTOMER";
+
+export type BusinessPartner = {
+  id: number;
+  organizationCode: string;
+  partnerType: PartnerType;
+  name: string;
+  taxId: string;
+  blueBookNumber: string;
+  dunsNumber: string;
+  street: string;
+  exteriorNumber: string;
+  interiorNumber: string | null;
+  stateCode: string;
+  stateName: string;
+  city: string;
+  postalCode: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  createdAt?: string;
+};
+
+export type NewBusinessPartner = Omit<BusinessPartner, "id" | "organizationCode" | "createdAt">;
