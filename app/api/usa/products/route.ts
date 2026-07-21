@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { products } from "../../../../db/schema";
 
@@ -21,9 +21,14 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     if (!clean(payload.name)) return Response.json({ error: "Ingresa el nombre del producto." }, { status: 400 });
+    const alias = clean(payload.alias).toUpperCase();
+    if (!/^[A-Z]{1,3}$/.test(alias)) return Response.json({ error: "El alias debe tener de 1 a 3 letras." }, { status: 400 });
+    const duplicate = await getDb().select({ id: products.id }).from(products).where(and(eq(products.organizationCode, "USA"), eq(products.alias, alias))).limit(1);
+    if (duplicate.length) return Response.json({ error: "Ese alias ya está asignado a otro producto." }, { status: 409 });
     const [product] = await getDb().insert(products).values({
       organizationCode: "USA",
       name: clean(payload.name),
+      alias,
       presentation: clean(payload.presentation) || null,
       size: clean(payload.size) || null,
       label: clean(payload.label) || null,

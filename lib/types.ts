@@ -86,6 +86,7 @@ export type Product = {
   id: number;
   organizationCode: string;
   name: string;
+  alias: string;
   presentation: string | null;
   size: string | null;
   label: string | null;
@@ -113,6 +114,7 @@ export type BusinessPartner = {
   contactEmail: string;
   contactPhone: string;
   assignedSeller: string | null;
+  profitPercentage: number;
   createdAt?: string;
 };
 
@@ -139,7 +141,6 @@ export type UserAccount = {
   alias: string;
   email: string;
   permissions: string;
-  profitPercentage: number;
   active: boolean;
   createdAt?: string;
 };

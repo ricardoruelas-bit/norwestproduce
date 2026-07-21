@@ -58,6 +58,7 @@ export const products = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     organizationCode: text("organization_code").notNull().default("USA"),
     name: text("name").notNull(),
+    alias: text("alias").notNull().default(""),
     presentation: text("presentation"),
     size: text("size"),
     label: text("label"),
@@ -130,6 +131,7 @@ export const businessPartners = sqliteTable(
     contactEmail: text("contact_email").notNull(),
     contactPhone: text("contact_phone").notNull(),
     assignedSeller: text("assigned_seller"),
+    profitPercentage: real("profit_percentage").notNull().default(0),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [

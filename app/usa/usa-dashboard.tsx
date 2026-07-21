@@ -79,7 +79,7 @@ const blankSale = {
 const blankPartner = {
   partnerType: "SUPPLIER" as PartnerType, name: "", pacaNumber: "", taxId: "", blueBookNumber: "", dunsNumber: "",
   street: "", exteriorNumber: "", interiorNumber: "", stateCode: "", stateName: "", city: "", postalCode: "",
-  contactName: "", contactEmail: "", contactPhone: "", assignedSeller: "",
+  contactName: "", contactEmail: "", contactPhone: "", assignedSeller: "", profitPercentage: "0",
 };
 
 const blankInventory = {
@@ -88,10 +88,10 @@ const blankInventory = {
   purchasePrice: "", freightCost: "", mexicoCustomsCost: "", usCustomsCost: "", overweightCost: "", redLightCost: "", coldStorage: "", coldStorageCost: "",
 };
 
-const blankProduct = { name: "", presentation: "", size: "", label: "" };
+const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "" };
 const blankColdStorage = { name: "", address: "", phone: "" };
 const blankCompany: Omit<CompanySettings, "id" | "organizationCode"> = { legalName: "NORWEST PRODUCE LLC", street: "710 LAUREL AVENUE", city: "MCALLEN", state: "TX", postalCode: "78501", blueBookNumber: "", pacaNumber: "", dunsNumber: "", taxId: "" };
-const blankUser = { fullName: "", alias: "", email: "", password: "", profitPercentage: "0", active: true, permissions: ["sales_view"] as string[] };
+const blankUser = { fullName: "", alias: "", email: "", password: "", active: true, permissions: ["sales_view"] as string[] };
 const PERMISSION_OPTIONS = [
   ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
 ] as const;
@@ -134,6 +134,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [invoiceSaveState, setInvoiceSaveState] = useState("");
   const [invoicePreview, setInvoicePreview] = useState<Sale | null>(null);
   const [socPreview, setSocPreview] = useState<Sale | null>(null);
+  const [productDetailSale, setProductDetailSale] = useState<Sale | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [productModal, setProductModal] = useState(false);
   const [productForm, setProductForm] = useState(blankProduct);
@@ -246,7 +247,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   function openUserForm(user?: UserAccount) {
     setEditingUserId(user?.id ?? null);
-    setUserForm(user ? { fullName: user.fullName, alias: user.alias, email: user.email, password: "", profitPercentage: String(user.profitPercentage || 0), active: user.active, permissions: (() => { try { return JSON.parse(user.permissions) as string[]; } catch { return []; } })() } : blankUser);
+    setUserForm(user ? { fullName: user.fullName, alias: user.alias, email: user.email, password: "", active: user.active, permissions: (() => { try { return JSON.parse(user.permissions) as string[]; } catch { return []; } })() } : blankUser);
     setUserSaveState("");
     setUserModal(true);
   }
@@ -255,7 +256,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     event.preventDefault();
     setUserSaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/users", { method: editingUserId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, id: editingUserId, profitPercentage: Number(userForm.profitPercentage) }) });
+      const response = await fetch("/api/usa/users", { method: editingUserId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, id: editingUserId }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar el usuario.");
       setUsers((current) => (editingUserId ? current.map((item) => item.id === editingUserId ? data.user : item) : [...current, data.user]).sort((a, b) => a.fullName.localeCompare(b.fullName)));
@@ -300,6 +301,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       street: partner.street || "", exteriorNumber: partner.exteriorNumber || "", interiorNumber: partner.interiorNumber || "", stateCode: partner.stateCode, stateName: partner.stateName,
       city: partner.city, postalCode: partner.postalCode, contactName: partner.contactName, contactEmail: partner.contactEmail, contactPhone: partner.contactPhone,
       assignedSeller: partner.assignedSeller || "",
+      profitPercentage: String(partner.profitPercentage || 0),
     });
     setPartnerSaveState("");
     setPartnerModal(partner.partnerType);
@@ -531,11 +533,13 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   }
 
   function openInvoicePreview(sale: Sale) {
+    setSocPreview(null);
     setInvoicePreview(sale);
     void Promise.all([loadPartners(), loadColdStorages(), loadSettings()]);
   }
 
   function openSocPreview(sale: Sale) {
+    setInvoicePreview(null);
     setSocPreview(sale);
     void Promise.all([loadPartners(), loadColdStorages(), loadSettings()]);
   }
@@ -623,6 +627,14 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const documentTotal = documentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const documentCustomer = partners.find((item) => item.partnerType === "CUSTOMER" && item.name === documentSale?.customer);
   const documentWarehouse = coldStorages.find((item) => item.name === documentSale?.warehouse);
+  function productAlias(name: string) {
+    return products.find((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase())?.alias || name.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase();
+  }
+  function productCell(sale: Sale) {
+    const items = invoiceItemsFor(sale);
+    if (items.length <= 1) return <><strong>{items[0]?.product || sale.product}</strong><small>{[items[0]?.presentation ?? sale.presentation, items[0]?.size ?? sale.size, items[0]?.label ?? sale.label].filter(Boolean).join(" · ") || "—"}</small></>;
+    return <button type="button" className="multi-product-button" onClick={() => setProductDetailSale(sale)}><strong>{items.map((item) => productAlias(item.product)).join(" / ")}</strong><small>{items.length} productos · Ver detalle</small></button>;
+  }
   const filtered = useMemo(() => salesRows.filter((row) => {
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
     return text.includes(query.toLowerCase())
@@ -713,11 +725,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
             <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option><option>OK</option><option>SE AJUSTÓ</option><option>PRECIO PENDIENTE</option><option>SIN FACTURA</option></select>
             <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
           </div>
-          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente / PO#</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th></tr></thead>
+          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th></tr></thead>
             <tbody>{filtered.map((row, index) => { return <tr className={pickupTiming(row.pickupDate)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
-              <td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
-              <td><strong>{row.product}</strong><small>{[row.presentation, row.size, row.label].filter(Boolean).join(" · ") || "—"}</small></td><td className="numeric">{number.format(row.boxes)}</td>
+              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
+              <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
               <td><span className={`status-tag ${row.loadStatus === "OK" ? "ok" : row.loadStatus === "PRECIO PENDIENTE" ? "warning" : "adjusted"}`}>{row.loadStatus}</span></td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td>
             </tr>; })}</tbody></table></div>
@@ -768,8 +780,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
             {companySaveState && <p className="form-message settings-message">{companySaveState}</p>}<div className="settings-actions"><button type="submit" className="primary-button">Guardar configuración</button></div>
           </form>
           <section className="sales-panel settings-card">
-            <div className="panel-heading"><div><h2>Usuarios y vendedores</h2><p>Alias, correo, porcentaje de utilidad y permisos por usuario.</p></div><button type="button" className="primary-button" onClick={() => openUserForm()}>＋ Agregar usuario</button></div>
-            <div className="table-wrap settings-users-table"><table><thead><tr><th>Nombre</th><th>Alias</th><th>Correo</th><th>% utilidad</th><th>Estatus</th><th>Permisos</th><th></th></tr></thead><tbody>{users.map((user) => { let permissionCount = 0; try { permissionCount = (JSON.parse(user.permissions) as string[]).length; } catch { permissionCount = 0; } return <tr key={user.id}><td><strong>{user.fullName}</strong></td><td>{user.alias}</td><td>{user.email}</td><td>{user.profitPercentage}%</td><td><span className={`status-tag ${user.active ? "ok" : "adjusted"}`}>{user.active ? "Activo" : "Inactivo"}</span></td><td>{permissionCount} autorizaciones</td><td><button type="button" className="edit-button" onClick={() => openUserForm(user)}>Editar</button></td></tr>; })}</tbody></table></div>
+            <div className="panel-heading"><div><h2>Usuarios y vendedores</h2><p>Alias, correo y permisos por usuario.</p></div><button type="button" className="primary-button" onClick={() => openUserForm()}>＋ Agregar usuario</button></div>
+            <div className="table-wrap settings-users-table"><table><thead><tr><th>Nombre</th><th>Alias</th><th>Correo</th><th>Estatus</th><th>Permisos</th><th></th></tr></thead><tbody>{users.map((user) => { let permissionCount = 0; try { permissionCount = (JSON.parse(user.permissions) as string[]).length; } catch { permissionCount = 0; } return <tr key={user.id}><td><strong>{user.fullName}</strong></td><td>{user.alias}</td><td>{user.email}</td><td><span className={`status-tag ${user.active ? "ok" : "adjusted"}`}>{user.active ? "Activo" : "Inactivo"}</span></td><td>{permissionCount} autorizaciones</td><td><button type="button" className="edit-button" onClick={() => openUserForm(user)}>Editar</button></td></tr>; })}</tbody></table></div>
             {!users.length && <div className="catalog-empty"><strong>Aún no hay usuarios internos</strong><span>Agrega al primer usuario o vendedor para asignarlo a los clientes.</span></div>}
           </section>
         </div>
@@ -795,8 +807,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           >
             <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => selectBolFile(event.target.files?.[0])} />
             <span className="bol-icon">⇧</span>
-            <strong>{bolFile ? bolFile.name : "Arrastra aquí el archivo BOL"}</strong>
-            <small>{bolFile ? `${(bolFile.size / 1024 / 1024).toFixed(2)} MB · Archivo listo` : "o haz clic para seleccionarlo · PDF, JPG, PNG o WEBP · máximo 10 MB"}</small>
+            <strong>{bolFile ? bolFile.name : "Arrastra o selecciona archivo BOL"}</strong>
+            <small>{bolFile ? `${(bolFile.size / 1024 / 1024).toFixed(2)} MB · Archivo listo` : "PDF, JPG, PNG o WEBP · máximo 10 MB"}</small>
           </label>
           {invoiceSaveState && invoiceStep === "bol" && <p className="form-message">{invoiceSaveState}</p>}
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoicePreparation}>Cancelar</button><button type="button" className="primary-button" disabled={!bolFile || bolFile.size > 10 * 1024 * 1024} onClick={() => setInvoiceStep("items")}>Adjuntar y continuar</button></div>
@@ -821,7 +833,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingPartnerId ? "Editar" : "Alta de"} {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios. Los demás pueden agregarse o modificarse después.</p></div></div>
         {!editingPartnerId && <label className="dual-role-check"><input type="checkbox" checked={alsoOppositeType} onChange={(e) => setAlsoOppositeType(e.target.checked)} /><span><strong>{partnerModal === "SUPPLIER" ? "También es cliente" : "También es proveedor"}</strong><small>Al guardar, la empresa se agregará automáticamente en ambos catálogos.</small></span></label>}
         <section className="form-section partner-section"><div className="form-section-heading"><span>1</span><div><h3>Información fiscal y comercial</h3></div></div><div className="form-grid partner-grid">
-          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>{(partnerModal === "CUSTOMER" || alsoOppositeType) && <label>Vendedor de Norwest *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName} · {user.profitPercentage}%</option>)}</select><small className="field-help">El porcentaje se define en Configuración → Usuarios.</small></label>}
+          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>{(partnerModal === "CUSTOMER" || alsoOppositeType) && <><label>Vendedor de Norwest *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName}</option>)}</select></label><label>% de utilidad del cliente<input min="0" max="100" step="0.01" type="number" value={partnerForm.profitPercentage} onChange={(e) => setPartnerForm({...partnerForm, profitPercentage:e.target.value})} /></label></>}
         </div></section>
         <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3><p>Selecciona primero el estado para habilitar sus ciudades.</p></div></div><div className="form-grid partner-grid">
           <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle<input value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior<input value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
@@ -878,16 +890,22 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
       {productModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveProduct}>
         <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar nuevo producto</h2><p className="modal-intro">Al guardarlo regresarás a la captura anterior con el producto seleccionado.</p></div></div>
-        <section className="form-section"><div className="form-grid"><label>Producto *<input required value={productForm.name} onChange={(e) => setProductForm({...productForm, name:e.target.value})} /></label><label>Presentación<input value={productForm.presentation} onChange={(e) => setProductForm({...productForm, presentation:e.target.value})} placeholder="Ej. caja 25 lb" /></label><label>Tamaño<input value={productForm.size} onChange={(e) => setProductForm({...productForm, size:e.target.value})} /></label><label>Etiqueta<input value={productForm.label} onChange={(e) => setProductForm({...productForm, label:e.target.value})} /></label></div></section>
+        <section className="form-section"><div className="form-grid"><label>Producto *<input required value={productForm.name} onChange={(e) => setProductForm({...productForm, name:e.target.value})} /></label><label>Alias *<input required maxLength={3} pattern="[A-Za-z]{1,3}" title="De 1 a 3 letras" value={productForm.alias} onChange={(e) => setProductForm({...productForm, alias:e.target.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 3)})} placeholder="Máx. 3 letras" /></label><label>Presentación<input value={productForm.presentation} onChange={(e) => setProductForm({...productForm, presentation:e.target.value})} placeholder="Ej. caja 25 lb" /></label><label>Tamaño<input value={productForm.size} onChange={(e) => setProductForm({...productForm, size:e.target.value})} /></label><label>Etiqueta<input value={productForm.label} onChange={(e) => setProductForm({...productForm, label:e.target.value})} /></label></div></section>
         {productSaveState && <p className="form-message">{productSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setProductModal(false); setProductTarget(null); }}>Cancelar</button><button type="submit" className="primary-button">Registrar producto</button></div>
       </form></div>}
 
       {userModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal user-modal" onSubmit={saveUser}>
-        <div className="modal-heading"><div><p className="eyebrow">Configuración USA</p><h2>{editingUserId ? "Editar usuario" : "Agregar usuario"}</h2><p className="modal-intro">Define sus datos, porcentaje de utilidad y lo que podrá consultar o modificar.</p></div></div>
-        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label><label>{editingUserId ? "Nueva contraseña" : "Contraseña *"}<input required={!editingUserId} minLength={8} type="password" autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder={editingUserId ? "Dejar vacío para conservarla" : "Mínimo 8 caracteres"} /></label><label>% de utilidad<input min="0" max="100" step="0.01" type="number" value={userForm.profitPercentage} onChange={(e) => setUserForm({...userForm, profitPercentage:e.target.value})} /></label><label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div></section>
+        <div className="modal-heading"><div><p className="eyebrow">Configuración USA</p><h2>{editingUserId ? "Editar usuario" : "Agregar usuario"}</h2><p className="modal-intro">Define sus datos y lo que podrá consultar o modificar.</p></div></div>
+        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label><label>{editingUserId ? "Nueva contraseña" : "Contraseña *"}<input required={!editingUserId} minLength={8} type="password" autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder={editingUserId ? "Dejar vacío para conservarla" : "Mínimo 8 caracteres"} /></label><label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div></section>
         <section className="form-section"><div className="form-section-heading"><span>✓</span><div><h3>Permisos del usuario</h3><p>Autoriza individualmente cada área.</p></div></div><div className="permissions-grid">{PERMISSION_OPTIONS.map(([key, label]) => <label key={key}><input type="checkbox" checked={userForm.permissions.includes(key)} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...userForm.permissions, key] : userForm.permissions.filter((item) => item !== key)})} /><span>{label}</span></label>)}</div></section>
         {userSaveState && <p className="form-message">{userSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(false)}>Cancelar</button><button type="submit" className="primary-button">{editingUserId ? "Guardar cambios" : "Crear usuario"}</button></div>
       </form></div>}
+
+      {productDetailSale && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal product-detail-modal">
+        <div className="modal-heading"><div><p className="eyebrow">Detalle de la carga</p><h2>Productos · Pickup #{productDetailSale.pickupNumber}</h2><p className="modal-intro">{productDetailSale.customer}</p></div></div>
+        <div className="product-detail-list">{invoiceItemsFor(productDetailSale).map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><dl><div><dt>Bultos / cajas</dt><dd>{number.format(item.quantity)}</dd></div><div><dt>Precio</dt><dd>{money.format(item.unitPrice)}</dd></div><div><dt>Total</dt><dd>{money.format(item.quantity * item.unitPrice)}</dd></div></dl></article>)}</div>
+        <div className="modal-actions"><button type="button" className="primary-button" onClick={() => setProductDetailSale(null)}>Cerrar</button></div>
+      </section></div>}
 
       {invoicePreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
         <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Factura {invoicePreview.invoiceNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => setInvoicePreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
