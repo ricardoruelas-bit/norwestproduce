@@ -94,6 +94,11 @@ export const sales = sqliteTable(
     loadStatus: text("load_status").notNull().default("OK"),
     paymentStatus: text("payment_status").notNull().default("PENDIENTE"),
     invoiceNumber: text("invoice_number"),
+    invoiceItems: text("invoice_items"),
+    bolObjectKey: text("bol_object_key"),
+    bolFileName: text("bol_file_name"),
+    bolContentType: text("bol_content_type"),
+    bolUploadedAt: text("bol_uploaded_at"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [

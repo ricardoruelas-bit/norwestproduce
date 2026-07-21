@@ -25,6 +25,20 @@ export type Sale = {
   loadStatus: string | null;
   paymentStatus: string | null;
   invoiceNumber: string | null;
+  invoiceItems?: string | null;
+  bolObjectKey?: string | null;
+  bolFileName?: string | null;
+  bolContentType?: string | null;
+  bolUploadedAt?: string | null;
+};
+
+export type InvoiceItem = {
+  product: string;
+  presentation: string;
+  size: string;
+  label: string;
+  quantity: number;
+  unitPrice: number;
 };
 
 export type NewSale = Omit<Sale, "id" | "sourceRow" | "organizationCode" | "profit" | "total">;

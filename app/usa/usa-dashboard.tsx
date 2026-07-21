@@ -3,13 +3,14 @@
 
 import Link from "next/link";
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
-import type { BusinessPartner, ColdStorage, InventoryLot, PartnerType, Product, Sale } from "../../lib/types";
+import type { BusinessPartner, ColdStorage, InventoryLot, InvoiceItem, PartnerType, Product, Sale } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
 const number = new Intl.NumberFormat("en-US");
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit", year: "numeric", timeZone: "UTC" });
+const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
 type Section = "dashboard" | "catalogs" | "inventory" | "invoicing";
 type StateOption = { code: string; name: string };
@@ -57,6 +58,16 @@ function partnerAddress(partner: BusinessPartner | undefined) {
   const street = [partner.street, partner.exteriorNumber, partner.interiorNumber && `STE ${partner.interiorNumber}`].filter(Boolean).join(" ");
   const city = [partner.city, partner.stateCode, partner.postalCode].filter(Boolean).join(", ").replace(", ,", ",");
   return [street || "Address pending", city].filter(Boolean);
+}
+
+function invoiceItemsFor(sale: Sale): InvoiceItem[] {
+  if (sale.invoiceItems) {
+    try {
+      const parsed = JSON.parse(sale.invoiceItems) as InvoiceItem[];
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch { /* Fall back to the original sale row. */ }
+  }
+  return [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice || 0 }];
 }
 
 const blankSale = {
@@ -110,6 +121,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [inventoryForm, setInventoryForm] = useState(blankInventory);
   const [inventorySaveState, setInventorySaveState] = useState("");
   const [invoiceSale, setInvoiceSale] = useState<Sale | null>(null);
+  const [invoiceStep, setInvoiceStep] = useState<"closed" | "pickup" | "bol" | "items">("closed");
+  const [pickedUp, setPickedUp] = useState<boolean | null>(null);
+  const [bolFile, setBolFile] = useState<File | null>(null);
+  const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
+  const [invoiceSaveState, setInvoiceSaveState] = useState("");
   const [invoicePreview, setInvoicePreview] = useState<Sale | null>(null);
   const [socPreview, setSocPreview] = useState<Sale | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -386,6 +402,49 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setSection("invoicing");
   }
 
+  function openInvoicePreparation(sale: Sale) {
+    setInvoiceSale(sale);
+    setPickedUp(null);
+    setBolFile(null);
+    setInvoiceItems(invoiceItemsFor(sale));
+    setInvoiceSaveState("");
+    setInvoiceStep("pickup");
+    void loadProducts();
+  }
+
+  function closeInvoicePreparation() {
+    setInvoiceStep("closed");
+    setPickedUp(null);
+    setBolFile(null);
+    setInvoiceSaveState("");
+  }
+
+  function updateInvoiceItem(index: number, changes: Partial<InvoiceItem>) {
+    setInvoiceItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
+  }
+
+  async function issueInvoice(event: FormEvent) {
+    event.preventDefault();
+    if (!invoiceSale?.id || !bolFile) return setInvoiceSaveState("Adjunta el BOL para poder facturar.");
+    if (!invoiceItems.length || invoiceItems.some((item) => !item.product.trim() || item.quantity <= 0 || item.unitPrice < 0)) return setInvoiceSaveState("Revisa las partidas, cantidades y precios.");
+    setInvoiceSaveState("Generando factura…");
+    try {
+      const payload = new FormData();
+      payload.set("saleId", String(invoiceSale.id));
+      payload.set("bol", bolFile);
+      payload.set("items", JSON.stringify(invoiceItems));
+      const response = await fetch("/api/usa/invoices", { method: "POST", body: payload });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo generar la factura.");
+      setSalesRows((current) => current.map((sale) => sale.id === data.sale.id ? data.sale : sale));
+      setInvoiceSale(null);
+      closeInvoicePreparation();
+      openInvoicePreview(data.sale);
+    } catch (error) {
+      setInvoiceSaveState(error instanceof Error ? error.message : "No se pudo generar la factura.");
+    }
+  }
+
   function openInvoicePreview(sale: Sale) {
     setInvoicePreview(sale);
     void Promise.all([loadPartners(), loadColdStorages()]);
@@ -475,6 +534,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const selectedLot = inventory.find((lot) => lot.id === Number(form.inventoryLotId));
   const selectedColdStorage = coldStorages.find((item) => item.name === inventoryForm.coldStorage);
   const documentSale = invoicePreview || socPreview;
+  const documentItems = documentSale ? invoiceItemsFor(documentSale) : [];
+  const documentTotal = documentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const documentCustomer = partners.find((item) => item.partnerType === "CUSTOMER" && item.name === documentSale?.customer);
   const documentWarehouse = coldStorages.find((item) => item.name === documentSale?.warehouse);
   const filtered = useMemo(() => salesRows.filter((row) => {
@@ -602,9 +663,41 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Facturación</h1></div></header>
         {invoiceSale && <section className="invoice-focus"><div><span>Venta seleccionada</span><h2>{invoiceSale.customer}</h2><p>Pickup #{invoiceSale.pickupNumber} · {number.format(invoiceSale.boxes)} cajas · {invoiceSale.total == null ? "Total pendiente" : money.format(invoiceSale.total)}</p></div><button type="button" className="secondary-button" onClick={() => setSection("dashboard")}>Volver a ventas</button></section>}
         <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Ventas pendientes de facturar</h2><p>Selecciona una venta desde el registro para preparar su factura.</p></div><span className="record-count">{salesRows.filter((row) => !row.invoiceNumber).length} pendientes</span></div>
-          <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>Bodega</th><th>Producto</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{salesRows.filter((row) => !row.invoiceNumber).map((row, index) => <tr className={invoiceSale?.id === row.id ? "selected-invoice-row" : ""} key={row.id ?? index}><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{row.pickupNumber}</td><td>{row.warehouse}</td><td>{row.product}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td><td><button type="button" className="invoice-button" onClick={() => setInvoiceSale(row)}>Preparar factura</button></td></tr>)}</tbody></table></div>
+          <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>Bodega</th><th>Producto</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{salesRows.filter((row) => !row.invoiceNumber).map((row, index) => <tr className={invoiceSale?.id === row.id ? "selected-invoice-row" : ""} key={row.id ?? index}><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{row.pickupNumber}</td><td>{row.warehouse}</td><td>{row.product}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td><td><button type="button" className="invoice-button" onClick={() => openInvoicePreparation(row)}>Preparar factura</button></td></tr>)}</tbody></table></div>
         </section>
       </section>}
+
+      {invoiceStep !== "closed" && invoiceSale && <div className="modal-backdrop invoice-workflow-backdrop">
+        {invoiceStep === "pickup" && <section className="sale-modal invoice-gate-modal">
+          <div className="modal-heading"><div><p className="eyebrow">Preparar factura</p><h2>¿El cliente ya recogió el producto?</h2><p className="modal-intro">Pickup #{invoiceSale.pickupNumber} · {invoiceSale.customer}</p></div></div>
+          <div className="pickup-confirmation">
+            <button type="button" className={`confirmation-choice ${pickedUp === true ? "selected" : ""}`} onClick={() => setPickedUp(true)}><strong>Sí, ya recogió</strong><small>Continuar para adjuntar el BOL de la bodega.</small></button>
+            <button type="button" className={`confirmation-choice danger-choice ${pickedUp === false ? "selected" : ""}`} onClick={() => setPickedUp(false)}><strong>No, todavía no</strong><small>La venta permanecerá pendiente y no podrá facturarse.</small></button>
+          </div>
+          {pickedUp === false && <p className="blocking-notice">No se puede facturar hasta que el cliente recoja el producto y exista un BOL.</p>}
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoicePreparation}>Cancelar</button><button type="button" className="primary-button" disabled={pickedUp !== true} onClick={() => setInvoiceStep("bol")}>Continuar</button></div>
+        </section>}
+
+        {invoiceStep === "bol" && <section className="sale-modal invoice-gate-modal">
+          <div className="modal-heading"><div><button type="button" className="back-link" onClick={() => setInvoiceStep("pickup")}>← Regresar</button><p className="eyebrow">BOL obligatorio</p><h2>Adjunta el Bill of Lading</h2><p className="modal-intro">Debe ser el BOL emitido por la bodega. Sin este archivo la factura no puede generarse.</p></div></div>
+          <label className={`bol-dropzone ${bolFile ? "has-file" : ""}`}><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setBolFile(event.target.files?.[0] || null)} /><span className="bol-icon">⇧</span><strong>{bolFile ? bolFile.name : "Seleccionar archivo BOL"}</strong><small>{bolFile ? `${(bolFile.size / 1024 / 1024).toFixed(2)} MB · Archivo listo` : "PDF, JPG, PNG o WEBP · máximo 10 MB"}</small></label>
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoicePreparation}>Cancelar</button><button type="button" className="primary-button" disabled={!bolFile || bolFile.size > 10 * 1024 * 1024} onClick={() => setInvoiceStep("items")}>Adjuntar y continuar</button></div>
+        </section>}
+
+        {invoiceStep === "items" && <form className="sale-modal invoice-items-modal" onSubmit={issueInvoice}>
+          <div className="modal-heading"><div><button type="button" className="back-link" onClick={() => setInvoiceStep("bol")}>← Cambiar BOL</button><p className="eyebrow">Revisión final</p><h2>Partidas de la factura</h2><p className="modal-intro">Modifica cantidades o precios y agrega o elimina productos según lo que realmente se entregó.</p></div><span className="bol-attached-chip">✓ BOL: {bolFile?.name}</span></div>
+          <datalist id="invoice-products">{products.map((product) => <option key={product.id} value={product.name} />)}</datalist>
+          <div className="invoice-edit-table"><div className="invoice-edit-head"><span>Producto</span><span>Presentación</span><span>Tamaño</span><span>Etiqueta</span><span>Cantidad</span><span>Precio</span><span></span></div>{invoiceItems.map((item, index) => <div className="invoice-edit-row" key={index}>
+            <input required list="invoice-products" aria-label="Producto" value={item.product} onChange={(event) => { const product = products.find((entry) => entry.name === event.target.value); updateInvoiceItem(index, product ? { product: product.name, presentation: product.presentation || "", size: product.size || "", label: product.label || "" } : { product: event.target.value }); }} />
+            <input aria-label="Presentación" value={item.presentation} onChange={(event) => updateInvoiceItem(index, { presentation: event.target.value })} /><input aria-label="Tamaño" value={item.size} onChange={(event) => updateInvoiceItem(index, { size: event.target.value })} /><input aria-label="Etiqueta" value={item.label} onChange={(event) => updateInvoiceItem(index, { label: event.target.value })} />
+            <input required min="1" step="1" type="number" aria-label="Cantidad" value={item.quantity} onChange={(event) => updateInvoiceItem(index, { quantity: Number(event.target.value) })} /><input required min="0" step="0.01" type="number" aria-label="Precio" value={item.unitPrice} onChange={(event) => updateInvoiceItem(index, { unitPrice: Number(event.target.value) })} />
+            <button type="button" aria-label="Eliminar partida" disabled={invoiceItems.length === 1} onClick={() => setInvoiceItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
+          </div>)}</div>
+          <button type="button" className="add-expense-button invoice-add-item" onClick={() => setInvoiceItems((current) => [...current, { product: "", presentation: "", size: "", label: "", quantity: 1, unitPrice: 0 }])}>＋ Agregar producto</button>
+          <div className="invoice-editor-total"><span>Total de factura</span><strong>{money.format(invoiceItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0), 0))}</strong></div>
+          {invoiceSaveState && <p className="form-message">{invoiceSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoicePreparation}>Cancelar</button><button type="submit" className="primary-button">Generar factura</button></div>
+        </form>}
+      </div>}
 
       {partnerModal && <div className={`modal-backdrop ${partnerTarget ? "modal-backdrop-elevated" : ""}`}><form className="sale-modal partner-modal" onSubmit={savePartner}>
         <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingPartnerId ? "Editar" : "Alta de"} {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios. Los demás pueden agregarse o modificarse después.</p></div></div>
@@ -676,9 +769,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <article className="print-document commercial-document invoice-document">
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>NORWEST PRODUCE LLC</strong><span>710 LAUREL AVENUE</span><span>MCALLEN, TX 78501</span></div></div><div className="document-title-block"><h3><span>INVOICE:</span><b>{invoicePreview.invoiceNumber}</b></h3><dl><dt>ISSUED:</dt><dd>{formatDocumentDate(invoicePreview.saleDate)}</dd><dt>P.O. #:</dt><dd>{invoicePreview.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{invoicePreview.pickupNumber}</dd><dt>PICKUP DATE:</dt><dd>{formatDocumentDate(invoicePreview.pickupDate)}</dd><dt>CREDIT TERMS:</dt><dd>21 Days</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(invoicePreview.dueDate)}</dd></dl></div></div>
           <div className="document-parties two-columns"><section><h4>BILL TO:</h4><strong>{invoicePreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{invoicePreview.warehouse}</strong>{documentWarehouse ? <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></> : <span>Pickup destination</span>}</section></div>
-          <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody><tr><td>{invoicePreview.product}</td><td>{invoicePreview.size || "—"}</td><td>{invoicePreview.label || "—"}</td><td>{invoicePreview.presentation || "—"}</td><td className="numeric">{number.format(invoicePreview.boxes)}</td><td className="numeric">{invoicePreview.salePrice == null ? "—" : money.format(invoicePreview.salePrice)}</td><td className="numeric">{invoicePreview.total == null ? "—" : money.format(invoicePreview.total)}</td></tr>{Array.from({ length: 4 }).map((_, index) => <tr className="empty-item-row" key={index}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{invoicePreview.total == null ? "—" : money.format(invoicePreview.total)}</td></tr></tfoot></table>
-          <p className="amount-words">{amountInWords(invoicePreview.total)}</p>
+          <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody>{documentItems.map((item, index) => <tr key={index}><td>{item.product}</td><td>{item.size || "—"}</td><td>{item.label || "—"}</td><td>{item.presentation || "—"}</td><td className="numeric">{number.format(item.quantity)}</td><td className="numeric">{money.format(item.unitPrice)}</td><td className="numeric">{money.format(item.quantity * item.unitPrice)}</td></tr>)}{Array.from({ length: Math.max(0, 5 - documentItems.length) }).map((_, index) => <tr className="empty-item-row" key={`empty-${index}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{money.format(documentTotal)}</td></tr></tfoot></table>
+          <p className="amount-words">{amountInWords(documentTotal)}</p>
           <p className="remit-note">Please remit payments to:</p><div className="payment-details"><section><strong>BANKING INFORMATION:</strong><span>Bank: IBC BANK</span><span>Acc. Name: NORWEST PRODUCE LLC</span><span>Acc. Number: 2516358520</span><span>Wire Routing: 114902528</span></section><section><strong>ADDRESS:</strong><span>1 S Broadway St</span><span>McAllen, TX. 78501</span></section></div>
+          {invoicePreview.bolFileName && <a className="invoice-bol-link" href={`/api/usa/invoices?saleId=${invoicePreview.id}`} target="_blank" rel="noreferrer">BOL adjunto: {invoicePreview.bolFileName}</a>}
           <p className="document-terms"><strong>Good Delivery Standards.</strong> Any claims for quality must be made within 24 hours of arrival at destination and supported by a timely federal inspection. The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930. Past due balances accrue interest at 1.5% per month. No adjustments will be honored unless the seller is notified as stated herein.</p>
         </article>
       </section></div>}
@@ -691,7 +785,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <dl className="soc-order-meta"><div><dt>P.O. Date</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></div><div><dt>P.O. #</dt><dd>{socPreview.purchaseOrder || "N/A"}</dd></div><div><dt>P.U. #</dt><dd>{socPreview.pickupNumber}</dd></div><div><dt>Buyer</dt><dd>{documentCustomer?.contactName || "Pending"}</dd></div><div><dt>Ship Terms</dt><dd>{socPreview.warehouse}</dd></div><div><dt>Payment Terms</dt><dd>21 Days</dd></div></dl>
           <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody><tr><td>{socPreview.product}</td><td>{socPreview.size || "—"}</td><td>{socPreview.label || "—"}</td><td>{socPreview.presentation || "—"}</td><td className="numeric">{number.format(socPreview.boxes)}</td><td className="numeric">{socPreview.salePrice == null ? "—" : money.format(socPreview.salePrice)}</td><td className="numeric">{socPreview.total == null ? "—" : money.format(socPreview.total)}</td></tr>{Array.from({ length: 4 }).map((_, index) => <tr className="empty-item-row" key={index}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{socPreview.total == null ? "—" : money.format(socPreview.total)}</td></tr></tfoot></table>
           <p className="amount-words">{amountInWords(socPreview.total)}</p>
-          <p className="document-terms soc-terms">The perishable agricultural commodities listed on this sales confirmation are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930. All claims must be supported by USDA inspection. Past due balances accrue interest at 1.5% per month, and no adjustments will be honored unless the seller is notified as stated herein.</p>
+          <p className="document-terms soc-terms">{SALES_ORDER_TERMS}</p>
         </article>
       </section></div>}
     </main>

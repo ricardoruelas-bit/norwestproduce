@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 
-type RuntimeBindings = { DB?: D1Database };
+type RuntimeBindings = { DB?: D1Database; BUCKET?: R2Bucket };
 
 declare global {
   var __NORWEST_RUNTIME_BINDINGS__: RuntimeBindings | undefined;
@@ -16,4 +16,10 @@ export function getDb() {
   }
 
   return drizzle(database, { schema });
+}
+
+export function getBucket() {
+  const bucket = globalThis.__NORWEST_RUNTIME_BINDINGS__?.BUCKET;
+  if (!bucket) throw new Error("Cloudflare R2 binding `BUCKET` is unavailable.");
+  return bucket;
 }
