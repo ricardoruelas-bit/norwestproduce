@@ -186,11 +186,22 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
   @page { size:letter; margin:0; }
   html,body { background:#fff; -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; }
   body * { visibility:hidden!important; }
+  .invoice-preview-backdrop { position:static!important; display:block!important; padding:0!important; background:none!important; backdrop-filter:none!important; }
+  .invoice-preview-modal { position:static!important; width:auto!important; max-height:none!important; overflow:visible!important; padding:0!important; border-radius:0!important; background:#fff!important; box-shadow:none!important; }
   .print-document,.print-document * { visibility:visible!important; -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; }
-  .print-document { position:absolute; inset:0; width:8.5in; min-height:11in; margin:0; padding:.55in .6in .45in; box-shadow:none; }
+  .print-document { position:absolute; inset:0; width:8.5in; height:11in; min-height:0; max-height:11in; overflow:hidden; margin:0; padding:.42in .52in .32in; box-shadow:none; break-after:avoid-page; page-break-after:avoid; }
+  .document-top { gap:24px; }
+  .document-company { grid-template-columns:220px 1fr; gap:14px; }
+  .document-company img { width:220px; }
+  .document-parties { margin:18px 0 19px; }
+  .commercial-document .document-items th,.commercial-document .document-items td { height:24px; padding:3px 5px; }
+  .commercial-document .document-items .empty-item-row td { height:22px; }
+  .amount-words { margin:15px 0 24px; }
+  .remit-note { margin-bottom:16px; }
+  .payment-details { gap:40px; }
   .document-title-block h3,.document-parties h4,.soc-order-meta dt { background:#2f6f6a!important; color:#fff!important; }
   .commercial-document .document-items .empty-item-row td { background:#f5f5f5!important; }
-.invoice-bol-link{display:none!important}
+  .invoice-bol-link{display:none!important}
 }
 
 .invoice-terms { margin-top:28px; font-size:5.75px; line-height:1.16; text-align:justify; }
@@ -217,5 +228,6 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 @media print {
   .document-title-block h3,.document-parties h4,.soc-order-meta dt { background-color:#2f6f6a!important; box-shadow:inset 0 0 0 1000px #2f6f6a!important; }
   .commercial-document .document-items .empty-item-row td { background-color:#f5f5f5!important; box-shadow:inset 0 0 0 1000px #f5f5f5!important; }
-  .invoice-terms { margin-top:24px!important; font-size:5.55px!important; line-height:1.14!important; }
+  .invoice-terms { margin-top:18px!important; font-size:5.25px!important; line-height:1.1!important; }
+  .soc-terms { margin-top:42px!important; font-size:5.7px!important; line-height:1.12!important; }
 }

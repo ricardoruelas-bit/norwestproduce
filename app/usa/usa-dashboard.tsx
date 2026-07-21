@@ -487,6 +487,23 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setInvoiceSaveState("");
   }
 
+  function selectBolFile(file?: File | null) {
+    if (!file) return;
+    const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+    if (!allowedTypes.has(file.type)) {
+      setBolFile(null);
+      setInvoiceSaveState("El BOL debe ser PDF, JPG, PNG o WEBP.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setBolFile(null);
+      setInvoiceSaveState("El BOL no puede exceder 10 MB.");
+      return;
+    }
+    setInvoiceSaveState("");
+    setBolFile(file);
+  }
+
   function updateInvoiceItem(index: number, changes: Partial<InvoiceItem>) {
     setInvoiceItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
   }
@@ -771,7 +788,17 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
         {invoiceStep === "bol" && <section className="sale-modal invoice-gate-modal">
           <div className="modal-heading"><div><button type="button" className="back-link" onClick={() => setInvoiceStep("pickup")}>← Regresar</button><p className="eyebrow">BOL obligatorio</p><h2>Adjunta el Bill of Lading</h2><p className="modal-intro">Debe ser el BOL emitido por la bodega. Sin este archivo la factura no puede generarse.</p></div></div>
-          <label className={`bol-dropzone ${bolFile ? "has-file" : ""}`}><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setBolFile(event.target.files?.[0] || null)} /><span className="bol-icon">⇧</span><strong>{bolFile ? bolFile.name : "Seleccionar archivo BOL"}</strong><small>{bolFile ? `${(bolFile.size / 1024 / 1024).toFixed(2)} MB · Archivo listo` : "PDF, JPG, PNG o WEBP · máximo 10 MB"}</small></label>
+          <label
+            className={`bol-dropzone ${bolFile ? "has-file" : ""}`}
+            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+            onDrop={(event) => { event.preventDefault(); selectBolFile(event.dataTransfer.files?.[0]); }}
+          >
+            <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => selectBolFile(event.target.files?.[0])} />
+            <span className="bol-icon">⇧</span>
+            <strong>{bolFile ? bolFile.name : "Arrastra aquí el archivo BOL"}</strong>
+            <small>{bolFile ? `${(bolFile.size / 1024 / 1024).toFixed(2)} MB · Archivo listo` : "o haz clic para seleccionarlo · PDF, JPG, PNG o WEBP · máximo 10 MB"}</small>
+          </label>
+          {invoiceSaveState && invoiceStep === "bol" && <p className="form-message">{invoiceSaveState}</p>}
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoicePreparation}>Cancelar</button><button type="button" className="primary-button" disabled={!bolFile || bolFile.size > 10 * 1024 * 1024} onClick={() => setInvoiceStep("items")}>Adjuntar y continuar</button></div>
         </section>}
 
