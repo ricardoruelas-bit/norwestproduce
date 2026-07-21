@@ -120,6 +120,9 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .catalog-table { max-height:calc(100vh - 300px); }.catalog-table table{min-width:1180px}
 .catalog-empty { display:flex; min-height:220px; flex-direction:column; align-items:center; justify-content:center; color:var(--muted); text-align:center; }.catalog-empty strong{color:var(--ink);font-size:14px}.catalog-empty span{margin-top:7px;font-size:11px}
 .partner-modal { width:min(980px,100%); }
+.dual-role-check { display:flex; align-items:flex-start; gap:11px; margin-top:15px; padding:14px 16px; border:1px solid rgba(0,127,113,.24); border-radius:12px; background:#f1f8f6; color:var(--ink); cursor:pointer; }
+.dual-role-check input { width:17px; height:17px; margin:1px 0 0; accent-color:var(--green); }
+.dual-role-check span,.dual-role-check strong,.dual-role-check small { display:block; }.dual-role-check strong{font-size:12px}.dual-role-check small{margin-top:4px;color:var(--muted);font-size:10px;font-weight:500}
 .partner-section{border-top:3px solid #6c8190}.address-section{border-top:3px solid var(--green)}.contact-section{border-top:3px solid var(--sun)}
 .partner-grid { grid-template-columns:repeat(3,1fr); }.partner-grid .span-2{grid-column:span 2}.partner-grid select:disabled{cursor:not-allowed;background:#f1f4f3;color:#9aa7a3}
 .modal-backdrop-elevated { z-index:35; background:rgba(15,38,34,.62); }

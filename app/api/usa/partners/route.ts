@@ -24,18 +24,21 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as Partial<NewBusinessPartner>;
+    const payload = (await request.json()) as Partial<NewBusinessPartner> & { alsoOppositeType?: boolean };
     const partnerType = payload.partnerType === "CUSTOMER" ? "CUSTOMER" : payload.partnerType === "SUPPLIER" ? "SUPPLIER" : null;
     if (!partnerType) return Response.json({ error: "Selecciona si el registro es proveedor o cliente." }, { status: 400 });
     const missing = requiredFields.some((field) => !clean(payload[field]));
     if (missing) return Response.json({ error: "Completa todos los campos obligatorios para continuar." }, { status: 400 });
     const email = clean(payload.contactEmail);
     if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
+    const phone = clean(payload.contactPhone).replace(/\D/g, "");
+    if (phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
 
-    const [created] = await getDb().insert(businessPartners).values({
+    const partnerValues = {
       organizationCode: "USA",
       partnerType,
       name: clean(payload.name),
+      pacaNumber: clean(payload.pacaNumber),
       taxId: clean(payload.taxId),
       blueBookNumber: clean(payload.blueBookNumber),
       dunsNumber: clean(payload.dunsNumber),
@@ -48,9 +51,21 @@ export async function POST(request: Request) {
       postalCode: clean(payload.postalCode),
       contactName: clean(payload.contactName),
       contactEmail: email,
-      contactPhone: clean(payload.contactPhone),
-    }).returning();
-    return Response.json({ partner: created }, { status: 201 });
+      contactPhone: phone,
+    };
+    const db = getDb();
+    if (payload.alsoOppositeType) {
+      const oppositeType = partnerType === "SUPPLIER" ? "CUSTOMER" : "SUPPLIER";
+      const [primaryResult, oppositeResult] = await db.batch([
+        db.insert(businessPartners).values(partnerValues).returning(),
+        db.insert(businessPartners).values({ ...partnerValues, partnerType: oppositeType }).returning(),
+      ]);
+      const created = primaryResult[0];
+      const opposite = oppositeResult[0];
+      return Response.json({ partner: created, partners: [created, opposite] }, { status: 201 });
+    }
+    const [created] = await db.insert(businessPartners).values(partnerValues).returning();
+    return Response.json({ partner: created, partners: [created] }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No fue posible guardar el registro." }, { status: 500 });
   }
@@ -66,9 +81,12 @@ export async function PATCH(request: Request) {
     if (missing) return Response.json({ error: "Completa todos los campos obligatorios para continuar." }, { status: 400 });
     const email = clean(payload.contactEmail);
     if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
+    const phone = clean(payload.contactPhone).replace(/\D/g, "");
+    if (phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
     const [updated] = await getDb().update(businessPartners).set({
       partnerType,
       name: clean(payload.name),
+      pacaNumber: clean(payload.pacaNumber),
       taxId: clean(payload.taxId),
       blueBookNumber: clean(payload.blueBookNumber),
       dunsNumber: clean(payload.dunsNumber),
@@ -81,7 +99,7 @@ export async function PATCH(request: Request) {
       postalCode: clean(payload.postalCode),
       contactName: clean(payload.contactName),
       contactEmail: email,
-      contactPhone: clean(payload.contactPhone),
+      contactPhone: phone,
     }).where(and(eq(businessPartners.id, id), eq(businessPartners.organizationCode, "USA"))).returning();
     if (!updated) return Response.json({ error: "Registro no encontrado." }, { status: 404 });
     return Response.json({ partner: updated });

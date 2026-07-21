@@ -92,6 +92,7 @@ export const businessPartners = sqliteTable(
     organizationCode: text("organization_code").notNull().default("USA"),
     partnerType: text("partner_type").notNull(),
     name: text("name").notNull(),
+    pacaNumber: text("paca_number").notNull().default(""),
     taxId: text("tax_id").notNull(),
     blueBookNumber: text("blue_book_number").notNull(),
     dunsNumber: text("duns_number").notNull(),

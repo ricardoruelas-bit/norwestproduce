@@ -71,6 +71,7 @@ export type BusinessPartner = {
   organizationCode: string;
   partnerType: PartnerType;
   name: string;
+  pacaNumber: string;
   taxId: string;
   blueBookNumber: string;
   dunsNumber: string;
