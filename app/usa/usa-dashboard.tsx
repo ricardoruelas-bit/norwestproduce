@@ -8,7 +8,7 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const number = new Intl.NumberFormat("en-US");
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
-type Section = "dashboard" | "catalogs";
+type Section = "dashboard" | "catalogs" | "inventory" | "invoicing";
 type StateOption = { code: string; name: string };
 
 function localDateKey(date = new Date()) {
@@ -22,11 +22,6 @@ function formatDate(value: string | null) {
   return value ? shortDate.format(new Date(`${value}T00:00:00Z`)) : "—";
 }
 
-function daysPastDue(value: string | null) {
-  if (!value) return null;
-  return Math.floor((Date.now() - new Date(`${value}T00:00:00Z`).getTime()) / 86400000);
-}
-
 const blankSale = {
   saleDate: localDateKey(), operationType: "DIRECT_RESALE" as Operation, supplier: "", inventoryLotId: "", customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
   boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", shipDate: "", pickupDate: "",
@@ -36,6 +31,10 @@ const blankPartner = {
   partnerType: "SUPPLIER" as PartnerType, name: "", taxId: "", blueBookNumber: "", dunsNumber: "",
   street: "", exteriorNumber: "", interiorNumber: "", stateCode: "", stateName: "", city: "", postalCode: "",
   contactName: "", contactEmail: "", contactPhone: "",
+};
+
+const blankInventory = {
+  receivedDate: localDateKey(), supplier: "", warehouse: "", pickupNumber: "", product: "", presentation: "", size: "", label: "", totalBoxes: "", unitCost: "",
 };
 
 export default function UsaDashboard({ initialSales }: { initialSales: Sale[] }) {
@@ -52,11 +51,16 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [partnerTypeFilter, setPartnerTypeFilter] = useState<PartnerType>("SUPPLIER");
   const [partnerModal, setPartnerModal] = useState<PartnerType | null>(null);
+  const [editingPartnerId, setEditingPartnerId] = useState<number | null>(null);
   const [partnerForm, setPartnerForm] = useState(blankPartner);
   const [partnerSaveState, setPartnerSaveState] = useState("");
   const [states, setStates] = useState<StateOption[]>([]);
   const [cities, setCities] = useState<string[]>([]);
   const [citiesLoading, setCitiesLoading] = useState(false);
+  const [inventoryModal, setInventoryModal] = useState(false);
+  const [inventoryForm, setInventoryForm] = useState(blankInventory);
+  const [inventorySaveState, setInventorySaveState] = useState("");
+  const [invoiceSale, setInvoiceSale] = useState<Sale | null>(null);
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
@@ -80,6 +84,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   }
 
   async function openPartnerForm(type: PartnerType) {
+    setEditingPartnerId(null);
     setPartnerForm({ ...blankPartner, partnerType: type });
     setPartnerSaveState("");
     setCities([]);
@@ -92,6 +97,29 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       } catch {
         setStates([]);
       }
+    }
+  }
+
+  async function editPartner(partner: BusinessPartner) {
+    setEditingPartnerId(partner.id);
+    setPartnerForm({
+      partnerType: partner.partnerType, name: partner.name, taxId: partner.taxId || "", blueBookNumber: partner.blueBookNumber || "", dunsNumber: partner.dunsNumber || "",
+      street: partner.street || "", exteriorNumber: partner.exteriorNumber || "", interiorNumber: partner.interiorNumber || "", stateCode: partner.stateCode, stateName: partner.stateName,
+      city: partner.city, postalCode: partner.postalCode, contactName: partner.contactName, contactEmail: partner.contactEmail, contactPhone: partner.contactPhone,
+    });
+    setPartnerSaveState("");
+    setPartnerModal(partner.partnerType);
+    try {
+      const [statesResponse, citiesResponse] = await Promise.all([
+        fetch("/api/usa/locations"),
+        fetch(`/api/usa/locations?state=${encodeURIComponent(partner.stateCode)}`),
+      ]);
+      const statesData = await statesResponse.json();
+      const citiesData = await citiesResponse.json();
+      if (Array.isArray(statesData.states)) setStates(statesData.states);
+      if (Array.isArray(citiesData.cities)) setCities(citiesData.cities);
+    } catch {
+      setCities([partner.city]);
     }
   }
 
@@ -116,10 +144,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     event.preventDefault();
     setPartnerSaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/partners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(partnerForm) });
+      const response = await fetch("/api/usa/partners", { method: editingPartnerId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...partnerForm, id: editingPartnerId }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
-      setPartners((current) => [...current, data.partner].sort((a, b) => a.name.localeCompare(b.name)));
+      setPartners((current) => (editingPartnerId ? current.map((partner) => partner.id === editingPartnerId ? data.partner : partner) : [...current, data.partner]).sort((a, b) => a.name.localeCompare(b.name)));
       setPartnerTypeFilter(partnerForm.partnerType);
       setPartnerModal(null);
       setPartnerSaveState("");
@@ -141,6 +169,46 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     }
   }
 
+  async function openInventorySection() {
+    setSection("inventory");
+    setInventoryLoading(true);
+    try {
+      const response = await fetch("/api/usa/inventory?all=1");
+      const data = await response.json();
+      setInventory(Array.isArray(data.lots) ? data.lots : []);
+    } catch {
+      setInventory([]);
+    } finally {
+      setInventoryLoading(false);
+    }
+  }
+
+  async function saveInventoryEntry(event: FormEvent) {
+    event.preventDefault();
+    setInventorySaveState("Guardando…");
+    try {
+      const response = await fetch("/api/usa/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(inventoryForm) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo registrar la entrada.");
+      setInventory((current) => [data.lot, ...current]);
+      setInventoryModal(false);
+      setInventorySaveState("");
+    } catch (error) {
+      setInventorySaveState(error instanceof Error ? error.message : "No se pudo registrar la entrada.");
+    }
+  }
+
+  function openInventoryEntry() {
+    setInventoryForm({ ...blankInventory, receivedDate: localDateKey() });
+    setInventorySaveState("");
+    setInventoryModal(true);
+  }
+
+  function openInvoicing(sale?: Sale) {
+    setInvoiceSale(sale ?? null);
+    setSection("invoicing");
+  }
+
   function openNewSale() {
     setForm({ ...blankSale, saleDate: localDateKey() });
     setSaveState("");
@@ -157,6 +225,14 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function closeModal() {
     setModalStep("closed");
     setSaveState("");
+  }
+
+  function pickupTiming(value: string | null) {
+    if (!value) return "";
+    const today = localDateKey();
+    if (value === today) return "pickup-today";
+    if (value < today) return "pickup-past";
+    return "";
   }
 
   function selectInventoryLot(lot: InventoryLot) {
@@ -226,13 +302,14 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="mini-mark"><span /><span /></div><div><strong>NORWEST</strong><small>PRODUCE LLC</small></div></div>
         <nav>
-          <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button><a className="nav-item"><span>↗</span> Ventas</a><a className="nav-item"><span>▤</span> Cargas</a>
-          <a className="nav-item"><span>□</span> Facturación</a><a className="nav-item"><span>◎</span> Cartera</a><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a>
+          <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button>
+          <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
+          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><a className="nav-item"><span>◎</span> Cartera</a><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a>
         </nav>
         <div className="sidebar-bottom"><div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div><Link href="/">⇄ Cambiar empresa</Link></div>
       </aside>
 
-      {section === "dashboard" ? <section className="erp-content">
+      {section === "dashboard" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Ventas y operaciones</h1></div><div className="topbar-actions"><button className="icon-button" aria-label="Notificaciones">♢<i /></button><button className="primary-button" onClick={openNewSale}>＋ Nueva venta</button></div></header>
         <section className="summary-grid">
           <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Vendido hoy</p><strong>{money.format(totals.todaySales)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthSales)}</b></span></article>
@@ -246,17 +323,18 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
             <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option><option>OK</option><option>SE AJUSTÓ</option><option>PRECIO PENDIENTE</option><option>SIN FACTURA</option></select>
             <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente / PO#</th><th>PU# / Bodega</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Vence</th></tr></thead>
-            <tbody>{filtered.map((row, index) => { const overdue = daysPastDue(row.dueDate); return <tr key={row.id ?? `${row.sourceRow}-${index}`}>
+          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente / PO#</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th></tr></thead>
+            <tbody>{filtered.map((row, index) => { return <tr className={pickupTiming(row.pickupDate)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
-              <td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td><strong>{row.pickupNumber}</strong><small>{row.warehouse}</small></td>
+              <td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td><strong>{row.pickupNumber}</strong></td><td>{row.warehouse}</td><td className="date-cell"><strong>{formatDate(row.pickupDate)}</strong>{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td><strong>{row.product}</strong><small>{[row.presentation, row.size, row.label].filter(Boolean).join(" · ") || "—"}</small></td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
-              <td><span className={`status-tag ${row.loadStatus === "OK" ? "ok" : row.loadStatus === "PRECIO PENDIENTE" ? "warning" : "adjusted"}`}>{row.loadStatus}</span></td><td>{row.invoiceNumber ? <span className="invoice-chip">#{row.invoiceNumber}</span> : <span className="muted">Pendiente</span>}</td>
-              <td><span className={overdue != null && overdue > 0 ? "overdue" : ""}>{formatDate(row.dueDate)}</span>{overdue != null && overdue > 0 && <small>{overdue} días</small>}</td>
+              <td><span className={`status-tag ${row.loadStatus === "OK" ? "ok" : row.loadStatus === "PRECIO PENDIENTE" ? "warning" : "adjusted"}`}>{row.loadStatus}</span></td><td>{row.invoiceNumber ? <span className="invoice-chip invoice-ok">OK</span> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td>
             </tr>; })}</tbody></table></div>
         </section>
-      </section> : <section className="erp-content">
+      </section>}
+
+      {section === "catalogs" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Clientes y proveedores</h1></div></header>
         <section className="catalog-summary">
           <button className={`catalog-type-card ${partnerTypeFilter === "SUPPLIER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("SUPPLIER")}><span className="catalog-icon">⇄</span><div><strong>Proveedores</strong><small>{partners.filter((partner) => partner.partnerType === "SUPPLIER").length} registrados</small></div></button>
@@ -264,35 +342,51 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         </section>
         <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>{partnerTypeFilter === "SUPPLIER" ? "Proveedores" : "Clientes"}</h2><p>Catálogo exclusivo de la operación USA</p></div><button className="primary-button" onClick={() => void openPartnerForm(partnerTypeFilter)}>＋ Alta de {partnerTypeFilter === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
-          <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>TAX ID #</th><th>Blue Book #</th><th>DUNS & Bradstreet #</th><th>Dirección</th><th>{partnerTypeFilter === "SUPPLIER" ? "Contacto para pagos" : "Contacto para cobros"}</th></tr></thead>
-            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.taxId}</td><td>{partner.blueBookNumber}</td><td>{partner.dunsNumber}</td><td><strong>{partner.street} {partner.exteriorNumber}{partner.interiorNumber ? ` Int. ${partner.interiorNumber}` : ""}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td><td><strong>{partner.contactName}</strong><small>{partner.contactEmail} · {partner.contactPhone}</small></td></tr>)}</tbody></table></div>
+          <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>TAX ID #</th><th>Blue Book #</th><th>DUNS & Bradstreet #</th><th>Dirección</th><th>{partnerTypeFilter === "SUPPLIER" ? "Contacto para pagos" : "Contacto para cobros"}</th><th></th></tr></thead>
+            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.taxId || "Pendiente"}</td><td>{partner.blueBookNumber || "Pendiente"}</td><td>{partner.dunsNumber || "Pendiente"}</td><td><strong>{[partner.street, partner.exteriorNumber && `#${partner.exteriorNumber}`, partner.interiorNumber && `Int. ${partner.interiorNumber}`].filter(Boolean).join(" ") || "Pendiente"}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td><td><strong>{partner.contactName}</strong><small>{partner.contactEmail} · {partner.contactPhone}</small></td><td><button type="button" className="edit-button" onClick={() => void editPartner(partner)}>Editar</button></td></tr>)}</tbody></table></div>
           {partners.filter((partner) => partner.partnerType === partnerTypeFilter).length === 0 && <div className="catalog-empty"><strong>Aún no hay {partnerTypeFilter === "SUPPLIER" ? "proveedores" : "clientes"} registrados</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
         </section>
       </section>}
 
-      {partnerModal && <div className="modal-backdrop" onMouseDown={() => setPartnerModal(null)}><form className="sale-modal partner-modal" onSubmit={savePartner} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Alta de {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios para registrar.</p></div><button type="button" onClick={() => setPartnerModal(null)} aria-label="Cerrar">×</button></div>
+      {section === "inventory" && <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Inventario importado</h1></div><button className="primary-button" onClick={openInventoryEntry}>＋ Registrar entrada</button></header>
+        <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Existencias por partida</h2><p>Aquí se da de alta el producto importado que entra a inventario.</p></div><span className="record-count">{inventory.length} partidas</span></div>
+          {inventoryLoading ? <div className="catalog-empty">Consultando inventario…</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Pickup #</th><th>Bodega</th><th className="numeric">Cajas recibidas</th><th className="numeric">Disponibles</th><th className="numeric">Costo</th></tr></thead><tbody>{inventory.map((lot) => <tr key={lot.id}><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "—"}</small></td><td>{lot.supplier || "—"}</td><td>{lot.pickupNumber || "—"}</td><td>{lot.warehouse}</td><td className="numeric">{number.format(lot.totalBoxes)}</td><td className="numeric strong-number">{number.format(lot.availableBoxes)}</td><td className="numeric">{lot.unitCost == null ? "—" : money.format(lot.unitCost)}</td></tr>)}</tbody></table></div>}
+          {!inventoryLoading && inventory.length === 0 && <div className="catalog-empty"><strong>Aún no hay entradas de inventario</strong><span>Usa “Registrar entrada” para dar de alta el primer producto importado.</span></div>}
+        </section>
+      </section>}
+
+      {section === "invoicing" && <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Facturación</h1></div></header>
+        {invoiceSale && <section className="invoice-focus"><div><span>Venta seleccionada</span><h2>{invoiceSale.customer}</h2><p>Pickup #{invoiceSale.pickupNumber} · {number.format(invoiceSale.boxes)} cajas · {invoiceSale.total == null ? "Total pendiente" : money.format(invoiceSale.total)}</p></div><button type="button" className="secondary-button" onClick={() => setSection("dashboard")}>Volver a ventas</button></section>}
+        <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Ventas pendientes de facturar</h2><p>Selecciona una venta desde el registro para preparar su factura.</p></div><span className="record-count">{salesRows.filter((row) => !row.invoiceNumber).length} pendientes</span></div>
+          <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>Bodega</th><th>Producto</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{salesRows.filter((row) => !row.invoiceNumber).map((row, index) => <tr className={invoiceSale?.id === row.id ? "selected-invoice-row" : ""} key={row.id ?? index}><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{row.pickupNumber}</td><td>{row.warehouse}</td><td>{row.product}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td><td><button type="button" className="invoice-button" onClick={() => setInvoiceSale(row)}>Preparar factura</button></td></tr>)}</tbody></table></div>
+        </section>
+      </section>}
+
+      {partnerModal && <div className="modal-backdrop"><form className="sale-modal partner-modal" onSubmit={savePartner}>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingPartnerId ? "Editar" : "Alta de"} {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios. Los demás pueden agregarse o modificarse después.</p></div></div>
         <section className="form-section partner-section"><div className="form-section-heading"><span>1</span><div><h3>Información fiscal y comercial</h3></div></div><div className="form-grid partner-grid">
-          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>TAX ID # *<input required value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK # *<input required value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET # *<input required value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>
+          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>
         </div></section>
         <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3><p>Selecciona primero el estado para habilitar sus ciudades.</p></div></div><div className="form-grid partner-grid">
-          <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle *<input required value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior *<input required value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
+          <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle<input value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior<input value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
         </div></section>
         <section className="form-section contact-section"><div className="form-section-heading"><span>3</span><div><h3>Contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"}</h3></div></div><div className="form-grid partner-grid">
           <label>Nombre de contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required value={partnerForm.contactName} onChange={(e) => setPartnerForm({...partnerForm, contactName:e.target.value})} /></label><label>Correo para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="email" value={partnerForm.contactEmail} onChange={(e) => setPartnerForm({...partnerForm, contactEmail:e.target.value})} /></label><label>Teléfono para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="tel" value={partnerForm.contactPhone} onChange={(e) => setPartnerForm({...partnerForm, contactPhone:e.target.value})} /></label>
         </div></section>
-        {partnerSaveState && <p className="form-message">{partnerSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setPartnerModal(null)}>Cancelar</button><button type="submit" className="primary-button">Registrar {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
+        {partnerSaveState && <p className="form-message">{partnerSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setPartnerModal(null)}>Cancelar</button><button type="submit" className="primary-button">{editingPartnerId ? "Guardar cambios" : `Registrar ${partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}`}</button></div>
       </form></div>}
 
-      {modalStep !== "closed" && <div className="modal-backdrop" onMouseDown={closeModal}>
-        {modalStep === "choose" ? <section className="sale-modal operation-modal" onMouseDown={(event) => event.stopPropagation()}>
-          <div className="modal-heading"><div><p className="eyebrow">Nueva venta</p><h2>¿Qué tipo de venta es?</h2><p className="modal-intro">Selecciona el origen del producto para abrir la captura correspondiente.</p></div><button type="button" onClick={closeModal} aria-label="Cerrar">×</button></div>
+      {modalStep !== "closed" && <div className="modal-backdrop">
+        {modalStep === "choose" ? <section className="sale-modal operation-modal">
+          <div className="modal-heading"><div><p className="eyebrow">Nueva venta</p><h2>¿Qué tipo de venta es?</h2><p className="modal-intro">Selecciona el origen del producto para abrir la captura correspondiente.</p></div></div>
           <div className="operation-choice-grid">
             <button type="button" className="operation-choice resale-choice" onClick={() => chooseOperation("DIRECT_RESALE")}><span className="choice-icon">⇄</span><strong>Compra y reventa</strong><small>Registra primero a quién se compró y después a quién se vendió.</small><i>Continuar →</i></button>
             <button type="button" className="operation-choice inventory-choice" onClick={() => chooseOperation("IMPORTED_INVENTORY")}><span className="choice-icon">▦</span><strong>Venta de inventario importado</strong><small>Elige una partida disponible del inventario en USA.</small><i>Ver inventario →</i></button>
-          </div>
-        </section> : <form className="sale-modal sale-modal-wide" onSubmit={saveSale} onMouseDown={(event) => event.stopPropagation()}>
-          <div className="modal-heading"><div><button type="button" className="back-link" onClick={() => setModalStep("choose")}>← Cambiar tipo</button><p className="eyebrow">{form.operationType === "DIRECT_RESALE" ? "Compra y reventa" : "Inventario importado"}</p><h2>Nueva venta</h2></div><button type="button" onClick={closeModal} aria-label="Cerrar">×</button></div>
+          </div><div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button></div>
+        </section> : <form className="sale-modal sale-modal-wide" onSubmit={saveSale}>
+          <div className="modal-heading"><div><button type="button" className="back-link" onClick={() => setModalStep("choose")}>← Cambiar tipo</button><p className="eyebrow">{form.operationType === "DIRECT_RESALE" ? "Compra y reventa" : "Inventario importado"}</p><h2>Nueva venta</h2></div></div>
 
           {form.operationType === "DIRECT_RESALE" ? <>
             <section className="form-section purchase-section"><div className="form-section-heading"><span>1</span><div><h3>Información de la compra</h3><p>Datos del proveedor y del producto adquirido.</p></div></div>
@@ -309,6 +403,14 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !selectedLot}>Guardar venta</button></div>
         </form>}
       </div>}
+
+      {inventoryModal && <div className="modal-backdrop"><form className="sale-modal sale-modal-wide" onSubmit={saveInventoryEntry}>
+        <div className="modal-heading"><div><p className="eyebrow">Inventario importado</p><h2>Registrar entrada</h2><p className="modal-intro">Esta partida quedará disponible para seleccionarla al registrar una venta de inventario.</p></div></div>
+        <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Datos de la importación</h3></div></div><div className="form-grid">
+          <label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<input value={inventoryForm.supplier} onChange={(e) => setInventoryForm({...inventoryForm, supplier:e.target.value})} /></label><label>Pickup #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><label>Bodega *<input required value={inventoryForm.warehouse} onChange={(e) => setInventoryForm({...inventoryForm, warehouse:e.target.value})} /></label><label>Producto *<input required value={inventoryForm.product} onChange={(e) => setInventoryForm({...inventoryForm, product:e.target.value})} /></label><label>Presentación<input value={inventoryForm.presentation} onChange={(e) => setInventoryForm({...inventoryForm, presentation:e.target.value})} /></label><label>Tamaño<input value={inventoryForm.size} onChange={(e) => setInventoryForm({...inventoryForm, size:e.target.value})} /></label><label>Etiqueta<input value={inventoryForm.label} onChange={(e) => setInventoryForm({...inventoryForm, label:e.target.value})} /></label><label>Cajas recibidas *<input required min="1" step="1" type="number" value={inventoryForm.totalBoxes} onChange={(e) => setInventoryForm({...inventoryForm, totalBoxes:e.target.value})} /></label><label>Costo por caja<input min="0" step="0.01" type="number" value={inventoryForm.unitCost} onChange={(e) => setInventoryForm({...inventoryForm, unitCost:e.target.value})} /></label>
+        </div></section>
+        {inventorySaveState && <p className="form-message">{inventorySaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setInventoryModal(false)}>Cancelar</button><button type="submit" className="primary-button">Registrar entrada</button></div>
+      </form></div>}
     </main>
   );
 }
