@@ -24,11 +24,27 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     const totalBoxes = Number(payload.totalBoxes);
-    const unitCost = payload.unitCost === "" || payload.unitCost == null ? null : Number(payload.unitCost);
+    const amount = (key: string) => payload[key] === "" || payload[key] == null ? 0 : Number(payload[key]);
+    const purchasePrice = amount("purchasePrice");
+    const freightCost = amount("freightCost");
+    const mexicoCustomsCost = amount("mexicoCustomsCost");
+    const usCustomsCost = amount("usCustomsCost");
+    const overweightCost = amount("overweightCost");
+    const redLightCost = amount("redLightCost");
+    const coldStorageCost = amount("coldStorageCost");
+    const additionalExpenses = Array.isArray(payload.additionalExpenses)
+      ? payload.additionalExpenses.map((item) => {
+          const expense = item as Record<string, unknown>;
+          return { concept: clean(expense.concept), amount: Number(expense.amount) || 0 };
+        }).filter((item) => item.concept || item.amount)
+      : [];
     if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !clean(payload.product) || !Number.isInteger(totalBoxes) || totalBoxes <= 0) {
       return Response.json({ error: "Completa fecha de entrada, bodega, producto y cajas recibidas." }, { status: 400 });
     }
-    if (unitCost != null && (!Number.isFinite(unitCost) || unitCost < 0)) return Response.json({ error: "Ingresa un costo válido." }, { status: 400 });
+    const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
+    if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes válidos en los costos de importación." }, { status: 400 });
+    const totalImportCost = purchasePrice * totalBoxes + freightCost + mexicoCustomsCost + usCustomsCost + overweightCost + redLightCost + coldStorageCost + additionalExpenses.reduce((sum, item) => sum + item.amount, 0);
+    const unitCost = totalImportCost / totalBoxes;
     const [lot] = await getDb().insert(inventoryLots).values({
       organizationCode: "USA",
       receivedDate: clean(payload.receivedDate),
@@ -42,6 +58,16 @@ export async function POST(request: Request) {
       totalBoxes,
       availableBoxes: totalBoxes,
       unitCost,
+      purchasePrice,
+      freightCost,
+      mexicoCustomsCost,
+      usCustomsCost,
+      overweightCost,
+      redLightCost,
+      coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
+      coldStorageCost,
+      additionalExpenses: JSON.stringify(additionalExpenses),
+      totalImportCost,
     }).returning();
     return Response.json({ lot }, { status: 201 });
   } catch (error) {

@@ -43,6 +43,25 @@ export type InventoryLot = {
   totalBoxes: number;
   availableBoxes: number;
   unitCost: number | null;
+  purchasePrice: number | null;
+  freightCost: number;
+  mexicoCustomsCost: number;
+  usCustomsCost: number;
+  overweightCost: number;
+  redLightCost: number;
+  coldStorage: string | null;
+  coldStorageCost: number;
+  additionalExpenses: string;
+  totalImportCost: number | null;
+};
+
+export type Product = {
+  id: number;
+  organizationCode: string;
+  name: string;
+  presentation: string | null;
+  size: string | null;
+  label: string | null;
 };
 
 export type PartnerType = "SUPPLIER" | "CUSTOMER";

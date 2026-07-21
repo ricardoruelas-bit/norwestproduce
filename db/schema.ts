@@ -17,12 +17,36 @@ export const inventoryLots = sqliteTable(
     totalBoxes: integer("total_boxes").notNull(),
     availableBoxes: integer("available_boxes").notNull(),
     unitCost: real("unit_cost"),
+    purchasePrice: real("purchase_price"),
+    freightCost: real("freight_cost").notNull().default(0),
+    mexicoCustomsCost: real("mexico_customs_cost").notNull().default(0),
+    usCustomsCost: real("us_customs_cost").notNull().default(0),
+    overweightCost: real("overweight_cost").notNull().default(0),
+    redLightCost: real("red_light_cost").notNull().default(0),
+    coldStorage: text("cold_storage"),
+    coldStorageCost: real("cold_storage_cost").notNull().default(0),
+    additionalExpenses: text("additional_expenses").notNull().default("[]"),
+    totalImportCost: real("total_import_cost"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("inventory_org_product_idx").on(table.organizationCode, table.product),
     index("inventory_org_available_idx").on(table.organizationCode, table.availableBoxes),
   ],
+);
+
+export const products = sqliteTable(
+  "products",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    organizationCode: text("organization_code").notNull().default("USA"),
+    name: text("name").notNull(),
+    presentation: text("presentation"),
+    size: text("size"),
+    label: text("label"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("products_org_name_idx").on(table.organizationCode, table.name)],
 );
 
 export const sales = sqliteTable(
