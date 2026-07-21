@@ -3,6 +3,8 @@ export type Sale = {
   sourceRow?: number;
   organizationCode?: string;
   operationType: "DIRECT_RESALE" | "IMPORTED_INVENTORY";
+  supplier?: string | null;
+  inventoryLotId?: number | null;
   saleDate: string;
   customer: string;
   purchaseOrder: string | null;
@@ -10,6 +12,7 @@ export type Sale = {
   pickupNumber: string;
   boxes: number;
   product: string;
+  presentation?: string | null;
   size: string | null;
   label: string | null;
   purchasePrice: number | null;
@@ -25,3 +28,19 @@ export type Sale = {
 };
 
 export type NewSale = Omit<Sale, "id" | "sourceRow" | "organizationCode" | "profit" | "total">;
+
+export type InventoryLot = {
+  id: number;
+  organizationCode: string;
+  receivedDate: string;
+  supplier: string | null;
+  warehouse: string;
+  pickupNumber: string | null;
+  product: string;
+  presentation: string | null;
+  size: string | null;
+  label: string | null;
+  totalBoxes: number;
+  availableBoxes: number;
+  unitCost: number | null;
+};

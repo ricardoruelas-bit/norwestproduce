@@ -1,12 +1,38 @@
 import { sql } from "drizzle-orm";
 import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
+export const inventoryLots = sqliteTable(
+  "inventory_lots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    organizationCode: text("organization_code").notNull().default("USA"),
+    receivedDate: text("received_date").notNull(),
+    supplier: text("supplier"),
+    warehouse: text("warehouse").notNull(),
+    pickupNumber: text("pickup_number"),
+    product: text("product").notNull(),
+    presentation: text("presentation"),
+    size: text("size"),
+    label: text("label"),
+    totalBoxes: integer("total_boxes").notNull(),
+    availableBoxes: integer("available_boxes").notNull(),
+    unitCost: real("unit_cost"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("inventory_org_product_idx").on(table.organizationCode, table.product),
+    index("inventory_org_available_idx").on(table.organizationCode, table.availableBoxes),
+  ],
+);
+
 export const sales = sqliteTable(
   "sales",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     organizationCode: text("organization_code").notNull().default("USA"),
     operationType: text("operation_type").notNull().default("DIRECT_RESALE"),
+    supplier: text("supplier"),
+    inventoryLotId: integer("inventory_lot_id").references(() => inventoryLots.id),
     saleDate: text("sale_date").notNull(),
     customer: text("customer").notNull(),
     purchaseOrder: text("purchase_order"),
@@ -14,6 +40,7 @@ export const sales = sqliteTable(
     pickupNumber: text("pickup_number").notNull(),
     boxes: integer("boxes").notNull(),
     product: text("product").notNull(),
+    presentation: text("presentation"),
     size: text("size"),
     label: text("label"),
     purchasePrice: real("purchase_price"),

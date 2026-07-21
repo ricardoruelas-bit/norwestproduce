@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../../../../db";
-import { sales } from "../../../../db/schema";
+import { inventoryLots, sales } from "../../../../db/schema";
 import referenceSales from "../../../../lib/reference-sales.json";
 import type { NewSale } from "../../../../lib/types";
 
@@ -19,6 +19,7 @@ async function seedReferenceData() {
       pickupNumber: row.pickupNumber,
       boxes: row.boxes,
       product: row.product,
+      presentation: null,
       size: row.size,
       label: row.label,
       purchasePrice: row.purchasePrice,
@@ -68,11 +69,27 @@ export async function POST(request: Request) {
     }
     const total = salePrice == null || !Number.isFinite(salePrice) ? null : boxes * salePrice;
     const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
-    const purchasePrice = payload.purchasePrice == null ? null : Number(payload.purchasePrice);
+    let purchasePrice = payload.purchasePrice == null ? null : Number(payload.purchasePrice);
+    let inventoryLotId: number | null = null;
+    if (operationType === "IMPORTED_INVENTORY") {
+      inventoryLotId = Number(payload.inventoryLotId);
+      if (!Number.isInteger(inventoryLotId) || inventoryLotId <= 0) {
+        return Response.json({ error: "Selecciona una partida disponible del inventario." }, { status: 400 });
+      }
+      const [lot] = await getDb().select().from(inventoryLots).where(and(
+        eq(inventoryLots.id, inventoryLotId),
+        eq(inventoryLots.organizationCode, "USA"),
+        gte(inventoryLots.availableBoxes, boxes),
+      )).limit(1);
+      if (!lot) return Response.json({ error: "La partida seleccionada ya no tiene suficientes cajas disponibles." }, { status: 409 });
+      purchasePrice = lot.unitCost;
+    }
     const profit = total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
     const [created] = await getDb().insert(sales).values({
       organizationCode: "USA",
       operationType,
+      supplier: payload.supplier?.trim() || null,
+      inventoryLotId,
       saleDate: payload.saleDate,
       customer: payload.customer.trim(),
       purchaseOrder: payload.purchaseOrder?.trim() || null,
@@ -80,6 +97,7 @@ export async function POST(request: Request) {
       pickupNumber: payload.pickupNumber.trim(),
       boxes,
       product: payload.product.trim(),
+      presentation: payload.presentation?.trim() || null,
       size: payload.size?.trim() || null,
       label: payload.label?.trim() || null,
       purchasePrice: Number.isFinite(purchasePrice) ? purchasePrice : null,
@@ -93,6 +111,11 @@ export async function POST(request: Request) {
       paymentStatus: "PENDIENTE",
       invoiceNumber: payload.invoiceNumber?.trim() || null,
     }).returning();
+    if (inventoryLotId) {
+      await getDb().update(inventoryLots)
+        .set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${boxes}` })
+        .where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, boxes)));
+    }
     return Response.json({ sale: created }, { status: 201 });
   } catch (error) {
     return Response.json({ error: errorMessage(error) }, { status: 500 });
