@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { BusinessPartner, InventoryLot, PartnerType, Product, Sale } from "../../lib/types";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import type { BusinessPartner, ColdStorage, InventoryLot, PartnerType, Product, Sale } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const number = new Intl.NumberFormat("en-US");
@@ -35,10 +35,17 @@ const blankPartner = {
 
 const blankInventory = {
   receivedDate: localDateKey(), supplier: "", warehouse: "", pickupNumber: "", product: "", presentation: "", size: "", label: "", totalBoxes: "",
+  boxesPerPallet: "", palletsPerLoad: "", exchangeRate: "",
   purchasePrice: "", freightCost: "", mexicoCustomsCost: "", usCustomsCost: "", overweightCost: "", redLightCost: "", coldStorage: "", coldStorageCost: "",
 };
 
 const blankProduct = { name: "", presentation: "", size: "", label: "" };
+const blankColdStorage = { name: "", address: "", phone: "" };
+type Currency = "USD" | "MXN";
+type CostKey = "purchasePrice" | "freightCost" | "mexicoCustomsCost" | "usCustomsCost" | "overweightCost" | "redLightCost" | "coldStorageCost";
+const defaultCostCurrencies: Record<CostKey, Currency> = {
+  purchasePrice: "USD", freightCost: "USD", mexicoCustomsCost: "MXN", usCustomsCost: "USD", overweightCost: "USD", redLightCost: "USD", coldStorageCost: "USD",
+};
 type PartnerTarget = "saleSupplier" | "saleCustomer" | "inventorySupplier" | null;
 
 export default function UsaDashboard({ initialSales }: { initialSales: Sale[] }) {
@@ -73,7 +80,13 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [productSaveState, setProductSaveState] = useState("");
   const [partnerTarget, setPartnerTarget] = useState<PartnerTarget>(null);
   const [productTarget, setProductTarget] = useState<"sale" | "inventory" | null>(null);
-  const [additionalExpenses, setAdditionalExpenses] = useState<Array<{ concept: string; amount: string }>>([]);
+  const [additionalExpenses, setAdditionalExpenses] = useState<Array<{ concept: string; amount: string; currency: Currency }>>([]);
+  const [costCurrencies, setCostCurrencies] = useState<Record<CostKey, Currency>>(defaultCostCurrencies);
+  const [totalBoxesManual, setTotalBoxesManual] = useState(false);
+  const [coldStorages, setColdStorages] = useState<ColdStorage[]>([]);
+  const [coldStorageModal, setColdStorageModal] = useState(false);
+  const [coldStorageForm, setColdStorageForm] = useState(blankColdStorage);
+  const [coldStorageSaveState, setColdStorageSaveState] = useState("");
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
@@ -101,8 +114,18 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     }
   }
 
+  async function loadColdStorages() {
+    try {
+      const response = await fetch("/api/usa/cold-storages");
+      const data = await response.json();
+      if (Array.isArray(data.coldStorages)) setColdStorages(data.coldStorages);
+    } catch {
+      setColdStorages([]);
+    }
+  }
+
   async function loadCaptureCatalogs() {
-    await Promise.all([loadPartners(), loadProducts()]);
+    await Promise.all([loadPartners(), loadProducts(), loadColdStorages()]);
   }
 
   async function openCatalogs() {
@@ -220,7 +243,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     event.preventDefault();
     setInventorySaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...inventoryForm, additionalExpenses }) });
+      const response = await fetch("/api/usa/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...inventoryForm, additionalExpenses, costCurrencies }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo registrar la entrada.");
       setInventory((current) => [data.lot, ...current]);
@@ -234,9 +257,69 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function openInventoryEntry() {
     setInventoryForm({ ...blankInventory, receivedDate: localDateKey() });
     setAdditionalExpenses([]);
+    setCostCurrencies(defaultCostCurrencies);
+    setTotalBoxesManual(false);
     setInventorySaveState("");
     setInventoryModal(true);
     void loadCaptureCatalogs();
+  }
+
+  function openColdStorageForm() {
+    setColdStorageForm(blankColdStorage);
+    setColdStorageSaveState("");
+    setColdStorageModal(true);
+  }
+
+  async function saveColdStorage(event: FormEvent) {
+    event.preventDefault();
+    setColdStorageSaveState("Guardando…");
+    try {
+      const response = await fetch("/api/usa/cold-storages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coldStorageForm) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar el cold storage.");
+      setColdStorages((current) => [...current, data.coldStorage].sort((a, b) => a.name.localeCompare(b.name)));
+      setInventoryForm((current) => ({ ...current, coldStorage: data.coldStorage.name, warehouse: data.coldStorage.name }));
+      setColdStorageModal(false);
+      setColdStorageSaveState("");
+    } catch (error) {
+      setColdStorageSaveState(error instanceof Error ? error.message : "No se pudo guardar el cold storage.");
+    }
+  }
+
+  function chooseColdStorage(value: string) {
+    if (value === "__new__") return openColdStorageForm();
+    const selected = coldStorages.find((item) => String(item.id) === value);
+    setInventoryForm((current) => ({ ...current, coldStorage: selected?.name || "", warehouse: selected?.name || "" }));
+  }
+
+  function updatePalletCalculation(field: "boxesPerPallet" | "palletsPerLoad", value: string) {
+    setInventoryForm((current) => {
+      const next = { ...current, [field]: value };
+      if (!totalBoxesManual) {
+        const calculated = (Number(next.boxesPerPallet) || 0) * (Number(next.palletsPerLoad) || 0);
+        next.totalBoxes = calculated ? String(calculated) : "";
+      }
+      return next;
+    });
+  }
+
+  function moveToNextField(event: KeyboardEvent<HTMLFormElement>) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement) || target.type === "submit") return;
+    const fields = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("input:not([disabled]):not([readonly]), select:not([disabled])"));
+    const index = fields.indexOf(target);
+    if (index >= 0 && index < fields.length - 1) {
+      event.preventDefault();
+      fields[index + 1].focus();
+    }
+  }
+
+  async function updatePickupDate(row: Sale, pickupDate: string) {
+    if (!row.id) return;
+    const response = await fetch("/api/usa/sales", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: row.id, pickupDate }) });
+    const data = await response.json();
+    if (response.ok && data.sale) setSalesRows((current) => current.map((sale) => sale.id === row.id ? data.sale : sale));
   }
 
   function openInvoicing(sale?: Sale) {
@@ -321,6 +404,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   }
 
   const selectedLot = inventory.find((lot) => lot.id === Number(form.inventoryLotId));
+  const selectedColdStorage = coldStorages.find((item) => item.name === inventoryForm.coldStorage);
   const filtered = useMemo(() => salesRows.filter((row) => {
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
     return text.includes(query.toLowerCase())
@@ -344,13 +428,15 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   const inventoryCostSummary = useMemo(() => {
     const boxes = Number(inventoryForm.totalBoxes) || 0;
-    const purchase = (Number(inventoryForm.purchasePrice) || 0) * boxes;
-    const fixed = [inventoryForm.freightCost, inventoryForm.mexicoCustomsCost, inventoryForm.usCustomsCost, inventoryForm.overweightCost, inventoryForm.redLightCost, inventoryForm.coldStorageCost]
-      .reduce((sum, value) => sum + (Number(value) || 0), 0);
-    const extras = additionalExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const rate = Number(inventoryForm.exchangeRate) || 0;
+    const usd = (value: string, currency: Currency) => currency === "MXN" ? (rate ? (Number(value) || 0) / rate : 0) : Number(value) || 0;
+    const purchase = usd(inventoryForm.purchasePrice, costCurrencies.purchasePrice) * boxes;
+    const fixed = (["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"] as CostKey[])
+      .reduce((sum, key) => sum + usd(inventoryForm[key], costCurrencies[key]), 0);
+    const extras = additionalExpenses.reduce((sum, item) => sum + usd(item.amount, item.currency), 0);
     const total = purchase + fixed + extras;
     return { total, unit: boxes ? total / boxes : 0 };
-  }, [inventoryForm, additionalExpenses]);
+  }, [inventoryForm, additionalExpenses, costCurrencies]);
 
   async function saveSale(event: FormEvent) {
     event.preventDefault();
@@ -374,6 +460,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     } catch (error) {
       setSaveState(error instanceof Error ? error.message : "No se pudo guardar.");
     }
+  }
+
+  function costInput(label: string, key: CostKey) {
+    return <label>{label}<span className="money-entry"><input min="0" step="0.01" type="number" value={inventoryForm[key]} onChange={(e) => setInventoryForm({ ...inventoryForm, [key]: e.target.value })} /><select aria-label={`Moneda de ${label}`} value={costCurrencies[key]} onChange={(e) => setCostCurrencies({ ...costCurrencies, [key]: e.target.value as Currency })}><option value="USD">USD</option><option value="MXN">MXN</option></select></span></label>;
   }
 
   return (
@@ -405,7 +495,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente / PO#</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th></tr></thead>
             <tbody>{filtered.map((row, index) => { return <tr className={pickupTiming(row.pickupDate)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
-              <td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td><strong>{row.pickupNumber}</strong></td><td>{row.warehouse}</td><td className="date-cell"><strong>{formatDate(row.pickupDate)}</strong>{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
+              <td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td><strong>{row.pickupNumber}</strong></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td><strong>{row.product}</strong><small>{[row.presentation, row.size, row.label].filter(Boolean).join(" · ") || "—"}</small></td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
               <td><span className={`status-tag ${row.loadStatus === "OK" ? "ok" : row.loadStatus === "PRECIO PENDIENTE" ? "warning" : "adjusted"}`}>{row.loadStatus}</span></td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => setInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td>
@@ -430,7 +520,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       {section === "inventory" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Inventario importado</h1></div><button className="primary-button" onClick={openInventoryEntry}>＋ Registrar entrada</button></header>
         <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Existencias por partida</h2><p>Aquí se da de alta el producto importado que entra a inventario.</p></div><span className="record-count">{inventory.length} partidas</span></div>
-          {inventoryLoading ? <div className="catalog-empty">Consultando inventario…</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Pickup #</th><th>Cold storage</th><th className="numeric">Cajas recibidas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total</th><th className="numeric">Costo real/caja</th></tr></thead><tbody>{inventory.map((lot) => <tr key={lot.id}><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "—"}</small></td><td>{lot.supplier || "—"}</td><td>{lot.pickupNumber || "—"}</td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{number.format(lot.totalBoxes)}</td><td className="numeric strong-number">{number.format(lot.availableBoxes)}</td><td className="numeric">{lot.totalImportCost == null ? "—" : money.format(lot.totalImportCost)}</td><td className="numeric">{lot.unitCost == null ? "—" : money.format(lot.unitCost)}</td></tr>)}</tbody></table></div>}
+          {inventoryLoading ? <div className="catalog-empty">Consultando inventario…</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Pickup #</th><th>Cold storage</th><th className="numeric">Cajas/pallet</th><th className="numeric">Pallets</th><th className="numeric">Cajas recibidas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total USD</th><th className="numeric">Costo real/caja</th></tr></thead><tbody>{inventory.map((lot) => <tr key={lot.id}><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "—"}</small></td><td>{lot.supplier || "—"}</td><td>{lot.pickupNumber || "—"}</td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{lot.boxesPerPallet == null ? "—" : number.format(lot.boxesPerPallet)}</td><td className="numeric">{lot.palletsPerLoad == null ? "—" : number.format(lot.palletsPerLoad)}</td><td className="numeric">{number.format(lot.totalBoxes)}</td><td className="numeric strong-number">{number.format(lot.availableBoxes)}</td><td className="numeric">{lot.totalImportCost == null ? "—" : money.format(lot.totalImportCost)}</td><td className="numeric">{lot.unitCost == null ? "—" : money.format(lot.unitCost)}</td></tr>)}</tbody></table></div>}
           {!inventoryLoading && inventory.length === 0 && <div className="catalog-empty"><strong>Aún no hay entradas de inventario</strong><span>Usa “Registrar entrada” para dar de alta el primer producto importado.</span></div>}
         </section>
       </section>}
@@ -470,7 +560,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
           {form.operationType === "DIRECT_RESALE" ? <>
             <section className="form-section purchase-section"><div className="form-section-heading"><span>1</span><div><h3>Información de la compra</h3><p>Datos del proveedor y del producto adquirido.</p></div></div>
-              <div className="form-grid"><label>Proveedor / a quién se compró<select required value={form.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "saleSupplier") : setForm({...form, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>PU# de compra<input required value={form.pickupNumber} onChange={(e) => setForm({...form, pickupNumber:e.target.value})} placeholder="Número de pickup" /></label><label>Producto<select required value={products.find((item) => item.name === form.product && (item.presentation || "") === form.presentation && (item.size || "") === form.size)?.id || ""} onChange={(e) => chooseProduct(e.target.value, "sale")}><option value="">Selecciona un producto</option>{products.map((product) => <option key={product.id} value={product.id}>{[product.name, product.presentation, product.size].filter(Boolean).join(" · ")}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label><label>Presentación<input value={form.presentation} readOnly /></label><label>Tamaño<input value={form.size} readOnly /></label><label>Etiqueta<input value={form.label} readOnly /></label><label>Precio de compra<input required min="0" step="0.01" type="number" value={form.purchasePrice} onChange={(e) => setForm({...form, purchasePrice:e.target.value})} /></label></div>
+              <div className="form-grid"><label>Proveedor / a quién se compró<select required value={form.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "saleSupplier") : setForm({...form, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>PU# de compra<input required value={form.pickupNumber} onChange={(e) => setForm({...form, pickupNumber:e.target.value})} placeholder="Número de pickup" /></label><label>Producto<select required value={products.find((item) => item.name === form.product && (item.presentation || "") === form.presentation && (item.size || "") === form.size)?.id || ""} onChange={(e) => chooseProduct(e.target.value, "sale")}><option value="">Selecciona un producto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label><label>Presentación<input value={form.presentation} readOnly /></label><label>Tamaño<input value={form.size} readOnly /></label><label>Etiqueta<input value={form.label} readOnly /></label><label>Precio de compra<input required min="0" step="0.01" type="number" value={form.purchasePrice} onChange={(e) => setForm({...form, purchasePrice:e.target.value})} /></label></div>
             </section>
           </> : <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Selecciona del inventario</h3><p>Solo aparecen partidas con cajas disponibles.</p></div></div>
             {inventoryLoading ? <div className="inventory-empty">Consultando inventario…</div> : inventory.length === 0 ? <div className="inventory-empty"><strong>No hay inventario importado disponible</strong><span>Cuando se registren entradas de importación, aparecerán aquí para poder venderlas.</span></div> : <div className="inventory-list">{inventory.map((lot) => <button key={lot.id} type="button" className={`inventory-row ${form.inventoryLotId === String(lot.id) ? "selected" : ""}`} onClick={() => selectInventoryLot(lot)}><span className="inventory-radio"/><span><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "Sin detalle"}</small></span><span><strong>{lot.warehouse}</strong><small>Recibido {formatDate(lot.receivedDate)}</small></span><span className="inventory-boxes"><strong>{number.format(lot.availableBoxes)}</strong><small>cajas disponibles</small></span></button>)}</div>}
@@ -484,16 +574,22 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         </form>}
       </div>}
 
-      {inventoryModal && <div className="modal-backdrop"><form className="sale-modal sale-modal-wide" onSubmit={saveInventoryEntry}>
+      {inventoryModal && <div className="modal-backdrop"><form className="sale-modal sale-modal-wide" onSubmit={saveInventoryEntry} onKeyDown={moveToNextField}>
         <div className="modal-heading"><div><p className="eyebrow">Inventario importado</p><h2>Registrar entrada</h2><p className="modal-intro">Esta partida quedará disponible para seleccionarla al registrar una venta de inventario.</p></div></div>
         <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Datos de la importación</h3></div></div><div className="form-grid">
-          <label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<select value={inventoryForm.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "inventorySupplier") : setInventoryForm({...inventoryForm, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>Pickup #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><label>Producto *<select required value={products.find((item) => item.name === inventoryForm.product && (item.presentation || "") === inventoryForm.presentation && (item.size || "") === inventoryForm.size)?.id || ""} onChange={(e) => chooseProduct(e.target.value, "inventory")}><option value="">Selecciona un producto</option>{products.map((product) => <option key={product.id} value={product.id}>{[product.name, product.presentation, product.size].filter(Boolean).join(" · ")}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label><label>Presentación<input value={inventoryForm.presentation} readOnly /></label><label>Tamaño<input value={inventoryForm.size} readOnly /></label><label>Etiqueta<input value={inventoryForm.label} readOnly /></label><label>Cajas recibidas *<input required min="1" step="1" type="number" value={inventoryForm.totalBoxes} onChange={(e) => setInventoryForm({...inventoryForm, totalBoxes:e.target.value})} /></label>
+          <label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<select value={inventoryForm.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "inventorySupplier") : setInventoryForm({...inventoryForm, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>Pickup #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><label>Producto *<select required value={products.find((item) => item.name === inventoryForm.product && (item.presentation || "") === inventoryForm.presentation && (item.size || "") === inventoryForm.size)?.id || ""} onChange={(e) => chooseProduct(e.target.value, "inventory")}><option value="">Selecciona un producto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label><label>Presentación<input value={inventoryForm.presentation} readOnly /></label><label>Tamaño<input value={inventoryForm.size} readOnly /></label><label>Etiqueta<input value={inventoryForm.label} readOnly /></label><label>Cajas por pallet<input min="1" step="1" type="number" value={inventoryForm.boxesPerPallet} onChange={(e) => updatePalletCalculation("boxesPerPallet", e.target.value)} /></label><label>Pallets por carga<input min="1" step="1" type="number" value={inventoryForm.palletsPerLoad} onChange={(e) => updatePalletCalculation("palletsPerLoad", e.target.value)} /></label><label>Total de bultos o cajas *<input required min="1" step="1" type="number" value={inventoryForm.totalBoxes} onChange={(e) => { setTotalBoxesManual(true); setInventoryForm({...inventoryForm, totalBoxes:e.target.value}); }} /><small className="field-help">Se calcula automáticamente, pero puedes ajustarlo por pallets incompletos.</small></label>
         </div></section>
-        <section className="form-section cost-section"><div className="form-section-heading"><span>2</span><div><h3>Costos y gastos de importación</h3><p>El precio de compra es por caja; los demás conceptos son importes totales.</p></div></div><div className="form-grid cost-grid">
-          <label>Precio de compra por caja<input min="0" step="0.01" type="number" value={inventoryForm.purchasePrice} onChange={(e) => setInventoryForm({...inventoryForm, purchasePrice:e.target.value})} /></label><label>Flete<input min="0" step="0.01" type="number" value={inventoryForm.freightCost} onChange={(e) => setInventoryForm({...inventoryForm, freightCost:e.target.value})} /></label><label>Aduana MX<input min="0" step="0.01" type="number" value={inventoryForm.mexicoCustomsCost} onChange={(e) => setInventoryForm({...inventoryForm, mexicoCustomsCost:e.target.value})} /></label><label>Aduana US<input min="0" step="0.01" type="number" value={inventoryForm.usCustomsCost} onChange={(e) => setInventoryForm({...inventoryForm, usCustomsCost:e.target.value})} /></label><label>Sobrepeso<input min="0" step="0.01" type="number" value={inventoryForm.overweightCost} onChange={(e) => setInventoryForm({...inventoryForm, overweightCost:e.target.value})} /></label><label>Semáforo rojo<input min="0" step="0.01" type="number" value={inventoryForm.redLightCost} onChange={(e) => setInventoryForm({...inventoryForm, redLightCost:e.target.value})} /></label><label>Cold storage de destino *<input required value={inventoryForm.coldStorage} onChange={(e) => setInventoryForm({...inventoryForm, coldStorage:e.target.value, warehouse:e.target.value})} /></label><label>Costo de cold storage<input min="0" step="0.01" type="number" value={inventoryForm.coldStorageCost} onChange={(e) => setInventoryForm({...inventoryForm, coldStorageCost:e.target.value})} /></label>
-        </div><div className="extra-expenses"><div className="extra-heading"><strong>Otros costos o gastos</strong><button type="button" className="add-expense-button" onClick={() => setAdditionalExpenses((current) => [...current, { concept: "", amount: "" }])}>＋ Agregar gasto</button></div>{additionalExpenses.map((expense, index) => <div className="expense-row" key={index}><input aria-label="Concepto del gasto" placeholder="Concepto" value={expense.concept} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept: e.target.value } : item))} /><input aria-label="Importe del gasto" placeholder="Importe" min="0" step="0.01" type="number" value={expense.amount} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item))} /><button type="button" aria-label="Eliminar gasto" onClick={() => setAdditionalExpenses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>
+        <section className="form-section cost-section"><div className="form-section-heading"><span>2</span><div><h3>Costos y gastos de importación</h3><p>Cada importe conserva su moneda. Los totales se presentan en USD.</p></div></div><div className="exchange-rate-row"><label>Tipo de cambio de esta transacción <span>1 USD =</span><input required={Object.values(costCurrencies).includes("MXN") || additionalExpenses.some((item) => item.currency === "MXN")} min="0.0001" step="0.0001" type="number" value={inventoryForm.exchangeRate} onChange={(e) => setInventoryForm({...inventoryForm, exchangeRate:e.target.value})} /><b>MXN</b></label></div><div className="form-grid cost-grid">
+          {costInput("Precio de compra por caja", "purchasePrice")}{costInput("Flete", "freightCost")}{costInput("Aduana MX", "mexicoCustomsCost")}{costInput("Aduana US", "usCustomsCost")}{costInput("Sobrepeso", "overweightCost")}{costInput("Semáforo rojo", "redLightCost")}<label>Cold storage de destino *<select required value={selectedColdStorage?.id || ""} onChange={(e) => chooseColdStorage(e.target.value)}><option value="">Selecciona un cold storage</option>{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar nuevo cold storage</option></select>{selectedColdStorage && <small className="field-help">{selectedColdStorage.address} · {selectedColdStorage.phone}</small>}</label>{costInput("Costo de cold storage", "coldStorageCost")}
+        </div><div className="extra-expenses"><div className="extra-heading"><strong>Otros costos o gastos</strong><button type="button" className="add-expense-button" onClick={() => setAdditionalExpenses((current) => [...current, { concept: "", amount: "", currency: "USD" }])}>＋ Agregar gasto</button></div>{additionalExpenses.map((expense, index) => <div className="expense-row" key={index}><input aria-label="Concepto del gasto" placeholder="Concepto" value={expense.concept} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept: e.target.value } : item))} /><input aria-label="Importe del gasto" placeholder="Importe" min="0" step="0.01" type="number" value={expense.amount} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item))} /><select aria-label="Moneda del gasto" value={expense.currency} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: e.target.value as Currency } : item))}><option value="USD">USD</option><option value="MXN">MXN</option></select><button type="button" aria-label="Eliminar gasto" onClick={() => setAdditionalExpenses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>
         <div className="import-cost-summary"><span><small>Costo total importado</small><strong>{money.format(inventoryCostSummary.total)}</strong></span><span><small>Costo real por caja</small><strong>{money.format(inventoryCostSummary.unit)}</strong></span></div></section>
         {inventorySaveState && <p className="form-message">{inventorySaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setInventoryModal(false)}>Cancelar</button><button type="submit" className="primary-button">Registrar entrada</button></div>
+      </form></div>}
+
+      {coldStorageModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveColdStorage}>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar cold storage</h2><p className="modal-intro">Al guardarlo regresarás a la entrada con este destino seleccionado.</p></div></div>
+        <section className="form-section"><div className="form-grid"><label>Nombre del cold storage *<input required value={coldStorageForm.name} onChange={(e) => setColdStorageForm({...coldStorageForm, name:e.target.value})} /></label><label className="span-2">Dirección *<input required value={coldStorageForm.address} onChange={(e) => setColdStorageForm({...coldStorageForm, address:e.target.value})} /></label><label>Teléfono *<input required type="tel" inputMode="numeric" minLength={10} maxLength={10} pattern="[0-9]{10}" placeholder="10 dígitos" value={coldStorageForm.phone} onChange={(e) => setColdStorageForm({...coldStorageForm, phone:e.target.value.replace(/\D/g, "").slice(0, 10)})} /></label></div></section>
+        {coldStorageSaveState && <p className="form-message">{coldStorageSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setColdStorageModal(false)}>Cancelar</button><button type="submit" className="primary-button">Registrar cold storage</button></div>
       </form></div>}
 
       {productModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveProduct}>

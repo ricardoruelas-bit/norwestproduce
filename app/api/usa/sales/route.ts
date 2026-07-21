@@ -121,3 +121,19 @@ export async function POST(request: Request) {
     return Response.json({ error: errorMessage(error) }, { status: 500 });
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const payload = await request.json() as Record<string, unknown>;
+    const id = Number(payload.id);
+    const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
+    if (!Number.isInteger(id) || id <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
+    const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
+    const [sale] = await getDb().update(sales).set({ pickupDate, dueDate })
+      .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
+    if (!sale) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+    return Response.json({ sale });
+  } catch (error) {
+    return Response.json({ error: errorMessage(error) }, { status: 500 });
+  }
+}

@@ -41,6 +41,8 @@ export type InventoryLot = {
   size: string | null;
   label: string | null;
   totalBoxes: number;
+  boxesPerPallet: number | null;
+  palletsPerLoad: number | null;
   availableBoxes: number;
   unitCost: number | null;
   purchasePrice: number | null;
@@ -52,7 +54,17 @@ export type InventoryLot = {
   coldStorage: string | null;
   coldStorageCost: number;
   additionalExpenses: string;
+  costCurrencies: string;
+  exchangeRate: number | null;
   totalImportCost: number | null;
+};
+
+export type ColdStorage = {
+  id: number;
+  organizationCode: string;
+  name: string;
+  address: string;
+  phone: string;
 };
 
 export type Product = {

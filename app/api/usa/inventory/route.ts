@@ -24,6 +24,12 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     const totalBoxes = Number(payload.totalBoxes);
+    const boxesPerPallet = payload.boxesPerPallet === "" || payload.boxesPerPallet == null ? null : Number(payload.boxesPerPallet);
+    const palletsPerLoad = payload.palletsPerLoad === "" || payload.palletsPerLoad == null ? null : Number(payload.palletsPerLoad);
+    const exchangeRate = payload.exchangeRate === "" || payload.exchangeRate == null ? null : Number(payload.exchangeRate);
+    const rawCurrencies = payload.costCurrencies && typeof payload.costCurrencies === "object" ? payload.costCurrencies as Record<string, unknown> : {};
+    const currency = (key: string) => rawCurrencies[key] === "MXN" ? "MXN" : "USD";
+    const toUsd = (value: number, selectedCurrency: string) => selectedCurrency === "MXN" ? value / (exchangeRate || 0) : value;
     const amount = (key: string) => payload[key] === "" || payload[key] == null ? 0 : Number(payload[key]);
     const purchasePrice = amount("purchasePrice");
     const freightCost = amount("freightCost");
@@ -35,7 +41,7 @@ export async function POST(request: Request) {
     const additionalExpenses = Array.isArray(payload.additionalExpenses)
       ? payload.additionalExpenses.map((item) => {
           const expense = item as Record<string, unknown>;
-          return { concept: clean(expense.concept), amount: Number(expense.amount) || 0 };
+          return { concept: clean(expense.concept), amount: Number(expense.amount) || 0, currency: expense.currency === "MXN" ? "MXN" : "USD" };
         }).filter((item) => item.concept || item.amount)
       : [];
     if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !clean(payload.product) || !Number.isInteger(totalBoxes) || totalBoxes <= 0) {
@@ -43,7 +49,20 @@ export async function POST(request: Request) {
     }
     const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
     if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes válidos en los costos de importación." }, { status: 400 });
-    const totalImportCost = purchasePrice * totalBoxes + freightCost + mexicoCustomsCost + usCustomsCost + overweightCost + redLightCost + coldStorageCost + additionalExpenses.reduce((sum, item) => sum + item.amount, 0);
+    if ((!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) && [...Object.keys(rawCurrencies).map(currency), ...additionalExpenses.map((item) => item.currency)].includes("MXN")) {
+      return Response.json({ error: "Ingresa un tipo de cambio válido para convertir los gastos en MXN." }, { status: 400 });
+    }
+    if ((boxesPerPallet != null && (!Number.isInteger(boxesPerPallet) || boxesPerPallet <= 0)) || (palletsPerLoad != null && (!Number.isInteger(palletsPerLoad) || palletsPerLoad <= 0))) {
+      return Response.json({ error: "Cajas por pallet y pallets por carga deben ser números enteros mayores que cero." }, { status: 400 });
+    }
+    const totalImportCost = toUsd(purchasePrice, currency("purchasePrice")) * totalBoxes
+      + toUsd(freightCost, currency("freightCost"))
+      + toUsd(mexicoCustomsCost, currency("mexicoCustomsCost"))
+      + toUsd(usCustomsCost, currency("usCustomsCost"))
+      + toUsd(overweightCost, currency("overweightCost"))
+      + toUsd(redLightCost, currency("redLightCost"))
+      + toUsd(coldStorageCost, currency("coldStorageCost"))
+      + additionalExpenses.reduce((sum, item) => sum + toUsd(item.amount, item.currency), 0);
     const unitCost = totalImportCost / totalBoxes;
     const [lot] = await getDb().insert(inventoryLots).values({
       organizationCode: "USA",
@@ -56,6 +75,8 @@ export async function POST(request: Request) {
       size: clean(payload.size) || null,
       label: clean(payload.label) || null,
       totalBoxes,
+      boxesPerPallet,
+      palletsPerLoad,
       availableBoxes: totalBoxes,
       unitCost,
       purchasePrice,
@@ -67,6 +88,8 @@ export async function POST(request: Request) {
       coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
       coldStorageCost,
       additionalExpenses: JSON.stringify(additionalExpenses),
+      costCurrencies: JSON.stringify(Object.fromEntries(["purchasePrice", "freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"].map((key) => [key, currency(key)]))),
+      exchangeRate,
       totalImportCost,
     }).returning();
     return Response.json({ lot }, { status: 201 });
