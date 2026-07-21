@@ -2,6 +2,7 @@ export type Sale = {
   id?: number;
   sourceRow?: number;
   organizationCode?: string;
+  operationType: "DIRECT_RESALE" | "IMPORTED_INVENTORY";
   saleDate: string;
   customer: string;
   purchaseOrder: string | null;
@@ -24,4 +25,3 @@ export type Sale = {
 };
 
 export type NewSale = Omit<Sale, "id" | "sourceRow" | "organizationCode" | "profit" | "total">;
-

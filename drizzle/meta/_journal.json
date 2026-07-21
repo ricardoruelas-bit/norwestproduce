@@ -8,6 +8,13 @@
       "when": 1784653559473,
       "tag": "0000_loose_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784654631315,
+      "tag": "0001_oval_skaar",
+      "breakpoints": true
     }
   ]
 }

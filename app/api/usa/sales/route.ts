@@ -11,6 +11,7 @@ async function seedReferenceData() {
 
   const seedRows = referenceSales.map((row) => ({
       organizationCode: "USA",
+      operationType: "DIRECT_RESALE",
       saleDate: row.saleDate,
       customer: row.customer,
       purchaseOrder: row.purchaseOrder,
@@ -66,10 +67,12 @@ export async function POST(request: Request) {
       return Response.json({ error: "La cantidad de cajas debe ser mayor que cero." }, { status: 400 });
     }
     const total = salePrice == null || !Number.isFinite(salePrice) ? null : boxes * salePrice;
+    const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
     const purchasePrice = payload.purchasePrice == null ? null : Number(payload.purchasePrice);
     const profit = total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
     const [created] = await getDb().insert(sales).values({
       organizationCode: "USA",
+      operationType,
       saleDate: payload.saleDate,
       customer: payload.customer.trim(),
       purchaseOrder: payload.purchaseOrder?.trim() || null,

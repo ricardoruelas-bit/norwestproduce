@@ -6,6 +6,7 @@ export const sales = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     organizationCode: text("organization_code").notNull().default("USA"),
+    operationType: text("operation_type").notNull().default("DIRECT_RESALE"),
     saleDate: text("sale_date").notNull(),
     customer: text("customer").notNull(),
     purchaseOrder: text("purchase_order"),

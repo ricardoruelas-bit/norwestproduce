@@ -8,6 +8,13 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const number = new Intl.NumberFormat("en-US");
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function formatDate(value: string | null) {
   return value ? shortDate.format(new Date(`${value}T00:00:00Z`)) : "—";
 }
@@ -18,7 +25,7 @@ function daysPastDue(value: string | null) {
 }
 
 const blankSale = {
-  saleDate: new Date().toISOString().slice(0, 10), customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
+  saleDate: localDateKey(), operationType: "DIRECT_RESALE" as "DIRECT_RESALE" | "IMPORTED_INVENTORY", customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
   boxes: "", product: "", size: "", label: "", purchasePrice: "", salePrice: "", shipDate: "", pickupDate: "",
 };
 
@@ -26,6 +33,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [salesRows, setSalesRows] = useState<Sale[]>(initialSales);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("TODOS");
+  const [operationType, setOperationType] = useState("TODAS");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(blankSale);
   const [saveState, setSaveState] = useState("");
@@ -40,22 +48,28 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
     const matchesQuery = text.includes(query.toLowerCase());
     const matchesStatus = status === "TODOS" || (status === "SIN FACTURA" ? !row.invoiceNumber : row.loadStatus === status);
-    return matchesQuery && matchesStatus;
-  }), [salesRows, query, status]);
+    const matchesOperation = operationType === "TODAS" || row.operationType === operationType;
+    return matchesQuery && matchesStatus && matchesOperation;
+  }), [salesRows, query, status, operationType]);
 
   const totals = useMemo(() => {
-    const totalSales = salesRows.reduce((sum, row) => sum + (row.total ?? 0), 0);
-    const boxes = salesRows.reduce((sum, row) => sum + row.boxes, 0);
-    const loads = new Set(salesRows.map((row) => row.pickupNumber.split("-").slice(0, 2).join("-"))).size;
+    const today = localDateKey();
+    const currentMonth = today.slice(0, 7);
+    const todayRows = salesRows.filter((row) => row.saleDate === today);
+    const monthRows = salesRows.filter((row) => row.saleDate.startsWith(currentMonth));
+    const todaySales = todayRows.reduce((sum, row) => sum + (row.total ?? 0), 0);
+    const monthSales = monthRows.reduce((sum, row) => sum + (row.total ?? 0), 0);
+    const todayBoxes = todayRows.reduce((sum, row) => sum + row.boxes, 0);
+    const monthBoxes = monthRows.reduce((sum, row) => sum + row.boxes, 0);
     const uninvoiced = salesRows.filter((row) => !row.invoiceNumber).reduce((sum, row) => sum + (row.total ?? 0), 0);
-    return { totalSales, boxes, loads, uninvoiced };
+    return { uninvoiced, todaySales, monthSales, todayBoxes, monthBoxes };
   }, [salesRows]);
 
   async function saveSale(event: FormEvent) {
     event.preventDefault();
     setSaveState("Guardando…");
     const payload = {
-      saleDate: form.saleDate, customer: form.customer, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse,
+      saleDate: form.saleDate, operationType: form.operationType, customer: form.customer, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse,
       pickupNumber: form.pickupNumber, boxes: Number(form.boxes), product: form.product, size: form.size, label: form.label,
       purchasePrice: form.purchasePrice ? Number(form.purchasePrice) : null, salePrice: form.salePrice ? Number(form.salePrice) : null,
       shipDate: form.shipDate || null, pickupDate: form.pickupDate || null, dueDate: form.pickupDate ? new Date(new Date(`${form.pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null,
@@ -100,8 +114,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         </header>
 
         <section className="summary-grid">
-          <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Ventas registradas</p><strong>{money.format(totals.totalSales)}</strong><span>Datos de la operación USA</span></article>
-          <article className="metric-card accent-blue"><div className="metric-icon">□</div><p>Cajas vendidas</p><strong>{number.format(totals.boxes)}</strong><span>{totals.loads} cargas identificadas</span></article>
+          <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Vendido hoy</p><strong>{money.format(totals.todaySales)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthSales)}</b></span></article>
+          <article className="metric-card accent-blue"><div className="metric-icon">□</div><p>Cajas vendidas hoy</p><strong>{number.format(totals.todayBoxes)}</strong><span>Acumulado del mes: <b>{number.format(totals.monthBoxes)}</b></span></article>
           <article className="metric-card accent-gold"><div className="metric-icon">!</div><p>Por facturar</p><strong>{money.format(totals.uninvoiced)}</strong><span>{salesRows.filter((row) => !row.invoiceNumber).length} partidas sin factura</span></article>
           <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Clientes activos</p><strong>{new Set(salesRows.map((row) => row.customer)).size}</strong><span>En el archivo de referencia</span></article>
         </section>
@@ -116,15 +130,19 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
             <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus">
               <option>TODOS</option><option>OK</option><option>SE AJUSTÓ</option><option>PRECIO PENDIENTE</option><option>SIN FACTURA</option>
             </select>
+            <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación">
+              <option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option>
+            </select>
           </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Fecha</th><th>Cliente / PO#</th><th>PU# / Bodega</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Vence</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Operación</th><th>Cliente / PO#</th><th>PU# / Bodega</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Vence</th></tr></thead>
               <tbody>
                 {filtered.map((row, index) => {
                   const overdue = daysPastDue(row.dueDate);
                   return <tr key={row.id ?? `${row.sourceRow}-${index}`}>
                     <td className="date-cell">{formatDate(row.saleDate)}</td>
+                    <td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
                     <td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td>
                     <td><strong>{row.pickupNumber}</strong><small>{row.warehouse}</small></td>
                     <td><strong>{row.product}</strong><small>{[row.size, row.label].filter(Boolean).join(" · ") || "—"}</small></td>
@@ -147,6 +165,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <div className="modal-heading"><div><p className="eyebrow">Operación USA</p><h2>Nueva venta</h2></div><button type="button" onClick={() => setShowForm(false)} aria-label="Cerrar">×</button></div>
           <div className="form-grid">
             <label>Fecha<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label>
+            <label>Tipo de operación<select required value={form.operationType} onChange={(e) => setForm({...form, operationType:e.target.value as "DIRECT_RESALE" | "IMPORTED_INVENTORY"})}><option value="DIRECT_RESALE">Compra y reventa</option><option value="IMPORTED_INVENTORY">Venta de inventario importado</option></select></label>
             <label>Cliente<input required value={form.customer} onChange={(e) => setForm({...form, customer:e.target.value})} placeholder="Nombre del cliente" /></label>
             <label>PO#<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label>
             <label>Bodega<input required value={form.warehouse} onChange={(e) => setForm({...form, warehouse:e.target.value})} placeholder="Ej. PROFRESH" /></label>
