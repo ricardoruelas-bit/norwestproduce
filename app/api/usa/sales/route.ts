@@ -1,0 +1,97 @@
+import { desc, eq } from "drizzle-orm";
+import { getDb } from "../../../../db";
+import { sales } from "../../../../db/schema";
+import referenceSales from "../../../../lib/reference-sales.json";
+import type { NewSale } from "../../../../lib/types";
+
+async function seedReferenceData() {
+  const db = getDb();
+  const existing = await db.select({ id: sales.id }).from(sales).where(eq(sales.organizationCode, "USA")).limit(1);
+  if (existing.length) return;
+
+  const seedRows = referenceSales.map((row) => ({
+      organizationCode: "USA",
+      saleDate: row.saleDate,
+      customer: row.customer,
+      purchaseOrder: row.purchaseOrder,
+      warehouse: row.warehouse,
+      pickupNumber: row.pickupNumber,
+      boxes: row.boxes,
+      product: row.product,
+      size: row.size,
+      label: row.label,
+      purchasePrice: row.purchasePrice,
+      salePrice: row.salePrice,
+      profit: row.profit,
+      shipDate: row.shipDate,
+      pickupDate: row.pickupDate,
+      total: row.total,
+      dueDate: row.dueDate,
+      loadStatus: row.loadStatus ?? "OK",
+      paymentStatus: row.paymentStatus ?? "PENDIENTE",
+      invoiceNumber: row.invoiceNumber,
+    }));
+  for (let index = 0; index < seedRows.length; index += 4) {
+    await db.insert(sales).values(seedRows.slice(index, index + 4));
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "No fue posible completar la operación.";
+}
+
+export async function GET() {
+  try {
+    await seedReferenceData();
+    const rows = await getDb()
+      .select()
+      .from(sales)
+      .where(eq(sales.organizationCode, "USA"))
+      .orderBy(desc(sales.saleDate), desc(sales.id));
+    return Response.json({ sales: rows });
+  } catch (error) {
+    return Response.json({ error: errorMessage(error) }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const payload = (await request.json()) as Partial<NewSale>;
+    if (!payload.saleDate || !payload.customer?.trim() || !payload.warehouse?.trim() || !payload.pickupNumber?.trim() || !payload.product?.trim()) {
+      return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
+    }
+    const boxes = Number(payload.boxes ?? 0);
+    const salePrice = payload.salePrice == null ? null : Number(payload.salePrice);
+    if (!Number.isFinite(boxes) || boxes <= 0) {
+      return Response.json({ error: "La cantidad de cajas debe ser mayor que cero." }, { status: 400 });
+    }
+    const total = salePrice == null || !Number.isFinite(salePrice) ? null : boxes * salePrice;
+    const purchasePrice = payload.purchasePrice == null ? null : Number(payload.purchasePrice);
+    const profit = total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
+    const [created] = await getDb().insert(sales).values({
+      organizationCode: "USA",
+      saleDate: payload.saleDate,
+      customer: payload.customer.trim(),
+      purchaseOrder: payload.purchaseOrder?.trim() || null,
+      warehouse: payload.warehouse.trim(),
+      pickupNumber: payload.pickupNumber.trim(),
+      boxes,
+      product: payload.product.trim(),
+      size: payload.size?.trim() || null,
+      label: payload.label?.trim() || null,
+      purchasePrice: Number.isFinite(purchasePrice) ? purchasePrice : null,
+      salePrice: Number.isFinite(salePrice) ? salePrice : null,
+      profit,
+      shipDate: payload.shipDate || null,
+      pickupDate: payload.pickupDate || null,
+      total,
+      dueDate: payload.dueDate || null,
+      loadStatus: payload.loadStatus?.trim() || "OK",
+      paymentStatus: "PENDIENTE",
+      invoiceNumber: payload.invoiceNumber?.trim() || null,
+    }).returning();
+    return Response.json({ sale: created }, { status: 201 });
+  } catch (error) {
+    return Response.json({ error: errorMessage(error) }, { status: 500 });
+  }
+}
