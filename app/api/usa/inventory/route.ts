@@ -49,8 +49,8 @@ export async function POST(request: Request) {
     }
     const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
     if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes válidos en los costos de importación." }, { status: 400 });
-    if ((!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) && [...Object.keys(rawCurrencies).map(currency), ...additionalExpenses.map((item) => item.currency)].includes("MXN")) {
-      return Response.json({ error: "Ingresa un tipo de cambio válido para convertir los gastos en MXN." }, { status: 400 });
+    if (!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+      return Response.json({ error: "Ingresa el tipo de cambio válido de esta importación para calcular los totales en USD y MXN." }, { status: 400 });
     }
     if ((boxesPerPallet != null && (!Number.isInteger(boxesPerPallet) || boxesPerPallet <= 0)) || (palletsPerLoad != null && (!Number.isInteger(palletsPerLoad) || palletsPerLoad <= 0))) {
       return Response.json({ error: "Cajas por pallet y pallets por carga deben ser números enteros mayores que cero." }, { status: 400 });
