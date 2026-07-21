@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
-import type { BusinessPartner, ColdStorage, InventoryLot, InvoiceItem, PartnerType, Product, Sale } from "../../lib/types";
+import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceItem, PartnerType, Product, Sale, UserAccount } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
@@ -11,8 +11,9 @@ const number = new Intl.NumberFormat("en-US");
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit", year: "numeric", timeZone: "UTC" });
 const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
+const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be made within 24 hours of arrival at destination and must be supported with a timely federal inspection fo the complete lot in question. We reserve the right to deny credit. Negotiated under P.A.C.A. terms. INTEREST WILL ACCRUE ON ANY PAST BALANCE AT THE RATE OF 1.5% PER MONTH (18% PER ANNUM.) The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
-type Section = "dashboard" | "catalogs" | "inventory" | "invoicing";
+type Section = "dashboard" | "catalogs" | "inventory" | "invoicing" | "settings";
 type StateOption = { code: string; name: string };
 
 function localDateKey(date = new Date()) {
@@ -72,13 +73,13 @@ function invoiceItemsFor(sale: Sale): InvoiceItem[] {
 
 const blankSale = {
   saleDate: localDateKey(), operationType: "DIRECT_RESALE" as Operation, supplier: "", inventoryLotId: "", customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
-  boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", shipDate: "", pickupDate: "",
+  boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", sellerName: "", shipDate: "", pickupDate: "",
 };
 
 const blankPartner = {
   partnerType: "SUPPLIER" as PartnerType, name: "", pacaNumber: "", taxId: "", blueBookNumber: "", dunsNumber: "",
   street: "", exteriorNumber: "", interiorNumber: "", stateCode: "", stateName: "", city: "", postalCode: "",
-  contactName: "", contactEmail: "", contactPhone: "",
+  contactName: "", contactEmail: "", contactPhone: "", assignedSeller: "",
 };
 
 const blankInventory = {
@@ -89,6 +90,11 @@ const blankInventory = {
 
 const blankProduct = { name: "", presentation: "", size: "", label: "" };
 const blankColdStorage = { name: "", address: "", phone: "" };
+const blankCompany: Omit<CompanySettings, "id" | "organizationCode"> = { legalName: "NORWEST PRODUCE LLC", street: "710 LAUREL AVENUE", city: "MCALLEN", state: "TX", postalCode: "78501", blueBookNumber: "", pacaNumber: "", dunsNumber: "", taxId: "" };
+const blankUser = { fullName: "", alias: "", email: "", password: "", profitPercentage: "0", active: true, permissions: ["sales_view"] as string[] };
+const PERMISSION_OPTIONS = [
+  ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
+] as const;
 type Currency = "USD" | "MXN";
 type CostKey = "purchasePrice" | "freightCost" | "mexicoCustomsCost" | "usCustomsCost" | "overweightCost" | "redLightCost" | "coldStorageCost";
 const defaultCostCurrencies: Record<CostKey, Currency> = {
@@ -143,6 +149,13 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [coldStorageModal, setColdStorageModal] = useState(false);
   const [coldStorageForm, setColdStorageForm] = useState(blankColdStorage);
   const [coldStorageSaveState, setColdStorageSaveState] = useState("");
+  const [companyForm, setCompanyForm] = useState(blankCompany);
+  const [companySaveState, setCompanySaveState] = useState("");
+  const [users, setUsers] = useState<UserAccount[]>([]);
+  const [userModal, setUserModal] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [userForm, setUserForm] = useState(blankUser);
+  const [userSaveState, setUserSaveState] = useState("");
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
@@ -202,6 +215,57 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     await Promise.all([loadPartners(), loadProducts(), loadColdStorages()]);
   }
 
+  async function loadSettings() {
+    const [settingsResponse, usersResponse] = await Promise.all([fetch("/api/usa/settings"), fetch("/api/usa/users")]);
+    const [settingsData, usersData] = await Promise.all([settingsResponse.json(), usersResponse.json()]);
+    if (settingsResponse.ok && settingsData.settings) {
+      const settings = settingsData.settings as CompanySettings;
+      setCompanyForm({ legalName: settings.legalName, street: settings.street, city: settings.city, state: settings.state, postalCode: settings.postalCode, blueBookNumber: settings.blueBookNumber, pacaNumber: settings.pacaNumber, dunsNumber: settings.dunsNumber, taxId: settings.taxId });
+    }
+    if (usersResponse.ok && Array.isArray(usersData.users)) setUsers(usersData.users);
+  }
+
+  function openSettings() {
+    setSection("settings");
+    setCompanySaveState("");
+    void loadSettings();
+  }
+
+  async function saveCompanySettings(event: FormEvent) {
+    event.preventDefault();
+    setCompanySaveState("Guardando…");
+    try {
+      const response = await fetch("/api/usa/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(companyForm) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
+      setCompanySaveState("Cambios guardados correctamente.");
+    } catch (error) {
+      setCompanySaveState(error instanceof Error ? error.message : "No se pudo guardar.");
+    }
+  }
+
+  function openUserForm(user?: UserAccount) {
+    setEditingUserId(user?.id ?? null);
+    setUserForm(user ? { fullName: user.fullName, alias: user.alias, email: user.email, password: "", profitPercentage: String(user.profitPercentage || 0), active: user.active, permissions: (() => { try { return JSON.parse(user.permissions) as string[]; } catch { return []; } })() } : blankUser);
+    setUserSaveState("");
+    setUserModal(true);
+  }
+
+  async function saveUser(event: FormEvent) {
+    event.preventDefault();
+    setUserSaveState("Guardando…");
+    try {
+      const response = await fetch("/api/usa/users", { method: editingUserId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, id: editingUserId, profitPercentage: Number(userForm.profitPercentage) }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar el usuario.");
+      setUsers((current) => (editingUserId ? current.map((item) => item.id === editingUserId ? data.user : item) : [...current, data.user]).sort((a, b) => a.fullName.localeCompare(b.fullName)));
+      setUserModal(false);
+      setUserSaveState("");
+    } catch (error) {
+      setUserSaveState(error instanceof Error ? error.message : "No se pudo guardar el usuario.");
+    }
+  }
+
   async function openCatalogs() {
     setSection("catalogs");
     await loadPartners();
@@ -215,6 +279,9 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setPartnerSaveState("");
     setCities([]);
     setPartnerModal(type);
+    if (type === "CUSTOMER" && !users.length) {
+      fetch("/api/usa/users").then((response) => response.json()).then((data) => { if (Array.isArray(data.users)) setUsers(data.users); }).catch(() => undefined);
+    }
     if (!states.length) {
       try {
         const response = await fetch("/api/usa/locations");
@@ -232,6 +299,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       partnerType: partner.partnerType, name: partner.name, pacaNumber: partner.pacaNumber || "", taxId: partner.taxId || "", blueBookNumber: partner.blueBookNumber || "", dunsNumber: partner.dunsNumber || "",
       street: partner.street || "", exteriorNumber: partner.exteriorNumber || "", interiorNumber: partner.interiorNumber || "", stateCode: partner.stateCode, stateName: partner.stateName,
       city: partner.city, postalCode: partner.postalCode, contactName: partner.contactName, contactEmail: partner.contactEmail, contactPhone: partner.contactPhone,
+      assignedSeller: partner.assignedSeller || "",
     });
     setPartnerSaveState("");
     setPartnerModal(partner.partnerType);
@@ -275,7 +343,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
       setPartners((current) => (editingPartnerId ? current.map((partner) => partner.id === editingPartnerId ? data.partner : partner) : [...current, ...(Array.isArray(data.partners) ? data.partners : [data.partner])]).sort((a, b) => a.name.localeCompare(b.name)));
       if (!editingPartnerId && partnerTarget === "saleSupplier") setForm((current) => ({ ...current, supplier: data.partner.name }));
-      if (!editingPartnerId && partnerTarget === "saleCustomer") setForm((current) => ({ ...current, customer: data.partner.name }));
+      if (!editingPartnerId && partnerTarget === "saleCustomer") setForm((current) => ({ ...current, customer: data.partner.name, sellerName: data.partner.assignedSeller || "" }));
       if (!editingPartnerId && partnerTarget === "inventorySupplier") setInventoryForm((current) => ({ ...current, supplier: data.partner.name }));
       setPartnerTypeFilter(partnerForm.partnerType);
       setPartnerModal(null);
@@ -447,12 +515,12 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   function openInvoicePreview(sale: Sale) {
     setInvoicePreview(sale);
-    void Promise.all([loadPartners(), loadColdStorages()]);
+    void Promise.all([loadPartners(), loadColdStorages(), loadSettings()]);
   }
 
   function openSocPreview(sale: Sale) {
     setSocPreview(sale);
-    void Promise.all([loadPartners(), loadColdStorages()]);
+    void Promise.all([loadPartners(), loadColdStorages(), loadSettings()]);
   }
 
   function openNewSale() {
@@ -555,6 +623,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       monthSales: monthRows.reduce((sum, row) => sum + (row.total ?? 0), 0),
       todayBoxes: todayRows.reduce((sum, row) => sum + row.boxes, 0),
       monthBoxes: monthRows.reduce((sum, row) => sum + row.boxes, 0),
+      todayProfit: todayRows.reduce((sum, row) => sum + (row.profit ?? 0), 0),
+      monthProfit: monthRows.reduce((sum, row) => sum + (row.profit ?? 0), 0),
       uninvoiced: salesRows.filter((row) => !row.invoiceNumber).reduce((sum, row) => sum + (row.total ?? 0), 0),
     };
   }, [salesRows]);
@@ -577,7 +647,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setSaveState("Guardando…");
     const payload = {
       saleDate: form.saleDate, operationType: form.operationType, supplier: form.supplier, inventoryLotId: form.inventoryLotId ? Number(form.inventoryLotId) : null,
-      customer: form.customer, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse, pickupNumber: form.pickupNumber,
+      customer: form.customer, sellerName: form.sellerName || null, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse, pickupNumber: form.pickupNumber,
       boxes: Number(form.boxes), product: form.product, presentation: form.presentation, size: form.size, label: form.label,
       purchasePrice: form.purchasePrice ? Number(form.purchasePrice) : null, salePrice: form.salePrice ? Number(form.salePrice) : null,
       shipDate: null, pickupDate: form.pickupDate || null,
@@ -603,11 +673,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   return (
     <main className="erp-shell">
       <aside className="sidebar">
-        <div className="sidebar-brand"><div className="mini-mark"><span /><span /></div><div><strong>NORWEST</strong><small>PRODUCE LLC</small></div></div>
+        <div className="sidebar-brand"><img className="sidebar-logo" src="/norwest-logo.jpg" alt="Norwest Produce" /></div>
         <nav>
           <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button>
           <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
-          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><a className="nav-item"><span>◎</span> Cartera</a><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a>
+          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><a className="nav-item"><span>◎</span> Cartera</a><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
         </nav>
         <div className="sidebar-bottom"><div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div><Link href="/">⇄ Cambiar empresa</Link></div>
       </aside>
@@ -618,7 +688,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Vendido hoy</p><strong>{money.format(totals.todaySales)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthSales)}</b></span></article>
           <article className="metric-card accent-blue"><div className="metric-icon">□</div><p>Cajas vendidas hoy</p><strong>{number.format(totals.todayBoxes)}</strong><span>Acumulado del mes: <b>{number.format(totals.monthBoxes)}</b></span></article>
           <article className="metric-card accent-gold"><div className="metric-icon">!</div><p>Por facturar</p><strong>{money.format(totals.uninvoiced)}</strong><span>{salesRows.filter((row) => !row.invoiceNumber).length} partidas sin factura</span></article>
-          <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Clientes activos</p><strong>{new Set(salesRows.map((row) => row.customer)).size}</strong><span>En el archivo de referencia</span></article>
+          <article className="metric-card accent-earth"><div className="metric-icon">↗</div><p>Utilidad de hoy</p><strong>{money.format(totals.todayProfit)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthProfit)}</b></span></article>
         </section>
         <section className="sales-panel">
           <div className="panel-heading"><div><h2>Registro de ventas</h2><p>Partidas importadas de “VENTAS NORWEST DIC 2025 - 2026”</p></div><span className="record-count">{filtered.length} {filtered.length === 1 ? "partida" : "partidas"}</span></div>
@@ -667,6 +737,27 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         </section>
       </section>}
 
+      {section === "settings" && <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Configuración de la empresa</h1></div></header>
+        <div className="settings-layout">
+          <form className="sales-panel settings-card" onSubmit={saveCompanySettings}>
+            <div className="panel-heading"><div><h2>Datos de Norwest Produce LLC</h2><p>Esta información se utilizará en documentos y registros del módulo USA.</p></div></div>
+            <div className="settings-form-grid">
+              <label className="span-2">Nombre legal *<input required value={companyForm.legalName} onChange={(e) => setCompanyForm({...companyForm, legalName:e.target.value})} /></label>
+              <label className="span-2">Dirección / calle<input value={companyForm.street} onChange={(e) => setCompanyForm({...companyForm, street:e.target.value})} /></label>
+              <label>Ciudad<input value={companyForm.city} onChange={(e) => setCompanyForm({...companyForm, city:e.target.value})} /></label><label>Estado<input value={companyForm.state} onChange={(e) => setCompanyForm({...companyForm, state:e.target.value})} /></label><label>ZIP Code<input value={companyForm.postalCode} onChange={(e) => setCompanyForm({...companyForm, postalCode:e.target.value})} /></label>
+              <label>Blue Book #<input value={companyForm.blueBookNumber} onChange={(e) => setCompanyForm({...companyForm, blueBookNumber:e.target.value})} /></label><label>PACA #<input value={companyForm.pacaNumber} onChange={(e) => setCompanyForm({...companyForm, pacaNumber:e.target.value})} /></label><label>DUNS & Bradstreet #<input value={companyForm.dunsNumber} onChange={(e) => setCompanyForm({...companyForm, dunsNumber:e.target.value})} /></label><label>TAX ID #<input value={companyForm.taxId} onChange={(e) => setCompanyForm({...companyForm, taxId:e.target.value})} /></label>
+            </div>
+            {companySaveState && <p className="form-message settings-message">{companySaveState}</p>}<div className="settings-actions"><button type="submit" className="primary-button">Guardar configuración</button></div>
+          </form>
+          <section className="sales-panel settings-card">
+            <div className="panel-heading"><div><h2>Usuarios y vendedores</h2><p>Alias, correo, porcentaje de utilidad y permisos por usuario.</p></div><button type="button" className="primary-button" onClick={() => openUserForm()}>＋ Agregar usuario</button></div>
+            <div className="table-wrap settings-users-table"><table><thead><tr><th>Nombre</th><th>Alias</th><th>Correo</th><th>% utilidad</th><th>Estatus</th><th>Permisos</th><th></th></tr></thead><tbody>{users.map((user) => { let permissionCount = 0; try { permissionCount = (JSON.parse(user.permissions) as string[]).length; } catch { permissionCount = 0; } return <tr key={user.id}><td><strong>{user.fullName}</strong></td><td>{user.alias}</td><td>{user.email}</td><td>{user.profitPercentage}%</td><td><span className={`status-tag ${user.active ? "ok" : "adjusted"}`}>{user.active ? "Activo" : "Inactivo"}</span></td><td>{permissionCount} autorizaciones</td><td><button type="button" className="edit-button" onClick={() => openUserForm(user)}>Editar</button></td></tr>; })}</tbody></table></div>
+            {!users.length && <div className="catalog-empty"><strong>Aún no hay usuarios internos</strong><span>Agrega al primer usuario o vendedor para asignarlo a los clientes.</span></div>}
+          </section>
+        </div>
+      </section>}
+
       {invoiceStep !== "closed" && invoiceSale && <div className="modal-backdrop invoice-workflow-backdrop">
         {invoiceStep === "pickup" && <section className="sale-modal invoice-gate-modal">
           <div className="modal-heading"><div><p className="eyebrow">Preparar factura</p><h2>¿El cliente ya recogió el producto?</h2><p className="modal-intro">Pickup #{invoiceSale.pickupNumber} · {invoiceSale.customer}</p></div></div>
@@ -703,7 +794,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingPartnerId ? "Editar" : "Alta de"} {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios. Los demás pueden agregarse o modificarse después.</p></div></div>
         {!editingPartnerId && <label className="dual-role-check"><input type="checkbox" checked={alsoOppositeType} onChange={(e) => setAlsoOppositeType(e.target.checked)} /><span><strong>{partnerModal === "SUPPLIER" ? "También es cliente" : "También es proveedor"}</strong><small>Al guardar, la empresa se agregará automáticamente en ambos catálogos.</small></span></label>}
         <section className="form-section partner-section"><div className="form-section-heading"><span>1</span><div><h3>Información fiscal y comercial</h3></div></div><div className="form-grid partner-grid">
-          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>
+          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>{(partnerModal === "CUSTOMER" || alsoOppositeType) && <label>Vendedor de Norwest *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName} · {user.profitPercentage}%</option>)}</select><small className="field-help">El porcentaje se define en Configuración → Usuarios.</small></label>}
         </div></section>
         <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3><p>Selecciona primero el estado para habilitar sus ciudades.</p></div></div><div className="form-grid partner-grid">
           <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle<input value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior<input value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
@@ -733,7 +824,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           </section>}
 
           {(form.operationType === "DIRECT_RESALE" || selectedLot) && <section className="form-section sale-section"><div className="form-section-heading"><span>2</span><div><h3>Información de la venta</h3><p>Datos del cliente, entrega y precio de venta.</p></div></div>
-            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("CUSTOMER", "saleCustomer") : setForm({...form, customer:e.target.value})}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega / destino<input required value={form.warehouse} onChange={(e) => setForm({...form, warehouse:e.target.value})} placeholder="Ej. PROFRESH" /></label><label>Cajas<input required min="1" max={selectedLot?.availableBoxes} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta<input required min="0" step="0.01" type="number" value={form.salePrice} onChange={(e) => setForm({...form, salePrice:e.target.value})} /></label><label>Día de pickup<input type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /></label></div>
+            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega / destino<input required value={form.warehouse} onChange={(e) => setForm({...form, warehouse:e.target.value})} placeholder="Ej. PROFRESH" /></label><label>Cajas<input required min="1" max={selectedLot?.availableBoxes} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta<input required min="0" step="0.01" type="number" value={form.salePrice} onChange={(e) => setForm({...form, salePrice:e.target.value})} /></label><label>Día de pickup<input type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /></label></div>
           </section>}
           <div className="form-total"><span>Total calculado</span><strong>{form.boxes && form.salePrice ? money.format(Number(form.boxes) * Number(form.salePrice)) : "$0.00"}</strong></div>
           {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !selectedLot}>Guardar venta</button></div>
@@ -764,23 +855,30 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         {productSaveState && <p className="form-message">{productSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setProductModal(false); setProductTarget(null); }}>Cancelar</button><button type="submit" className="primary-button">Registrar producto</button></div>
       </form></div>}
 
+      {userModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal user-modal" onSubmit={saveUser}>
+        <div className="modal-heading"><div><p className="eyebrow">Configuración USA</p><h2>{editingUserId ? "Editar usuario" : "Agregar usuario"}</h2><p className="modal-intro">Define sus datos, porcentaje de utilidad y lo que podrá consultar o modificar.</p></div></div>
+        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label><label>{editingUserId ? "Nueva contraseña" : "Contraseña *"}<input required={!editingUserId} minLength={8} type="password" autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder={editingUserId ? "Dejar vacío para conservarla" : "Mínimo 8 caracteres"} /></label><label>% de utilidad<input min="0" max="100" step="0.01" type="number" value={userForm.profitPercentage} onChange={(e) => setUserForm({...userForm, profitPercentage:e.target.value})} /></label><label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div></section>
+        <section className="form-section"><div className="form-section-heading"><span>✓</span><div><h3>Permisos del usuario</h3><p>Autoriza individualmente cada área.</p></div></div><div className="permissions-grid">{PERMISSION_OPTIONS.map(([key, label]) => <label key={key}><input type="checkbox" checked={userForm.permissions.includes(key)} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...userForm.permissions, key] : userForm.permissions.filter((item) => item !== key)})} /><span>{label}</span></label>)}</div></section>
+        {userSaveState && <p className="form-message">{userSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(false)}>Cancelar</button><button type="submit" className="primary-button">{editingUserId ? "Guardar cambios" : "Crear usuario"}</button></div>
+      </form></div>}
+
       {invoicePreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
         <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Factura {invoicePreview.invoiceNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => setInvoicePreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
         <article className="print-document commercial-document invoice-document">
-          <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>NORWEST PRODUCE LLC</strong><span>710 LAUREL AVENUE</span><span>MCALLEN, TX 78501</span></div></div><div className="document-title-block"><h3><span>INVOICE:</span><b>{invoicePreview.invoiceNumber}</b></h3><dl><dt>ISSUED:</dt><dd>{formatDocumentDate(invoicePreview.saleDate)}</dd><dt>P.O. #:</dt><dd>{invoicePreview.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{invoicePreview.pickupNumber}</dd><dt>PICKUP DATE:</dt><dd>{formatDocumentDate(invoicePreview.pickupDate)}</dd><dt>CREDIT TERMS:</dt><dd>21 Days</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(invoicePreview.dueDate)}</dd></dl></div></div>
+          <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block"><h3><span>INVOICE:</span><b>{invoicePreview.invoiceNumber}</b></h3><dl><dt>ISSUED:</dt><dd>{formatDocumentDate(invoicePreview.saleDate)}</dd><dt>P.O. #:</dt><dd>{invoicePreview.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{invoicePreview.pickupNumber}</dd><dt>PICKUP DATE:</dt><dd>{formatDocumentDate(invoicePreview.pickupDate)}</dd><dt>CREDIT TERMS:</dt><dd>21 Days</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(invoicePreview.dueDate)}</dd></dl></div></div>
           <div className="document-parties two-columns"><section><h4>BILL TO:</h4><strong>{invoicePreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{invoicePreview.warehouse}</strong>{documentWarehouse ? <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></> : <span>Pickup destination</span>}</section></div>
           <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody>{documentItems.map((item, index) => <tr key={index}><td>{item.product}</td><td>{item.size || "—"}</td><td>{item.label || "—"}</td><td>{item.presentation || "—"}</td><td className="numeric">{number.format(item.quantity)}</td><td className="numeric">{money.format(item.unitPrice)}</td><td className="numeric">{money.format(item.quantity * item.unitPrice)}</td></tr>)}{Array.from({ length: Math.max(0, 5 - documentItems.length) }).map((_, index) => <tr className="empty-item-row" key={`empty-${index}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{money.format(documentTotal)}</td></tr></tfoot></table>
           <p className="amount-words">{amountInWords(documentTotal)}</p>
           <p className="remit-note">Please remit payments to:</p><div className="payment-details"><section><strong>BANKING INFORMATION:</strong><span>Bank: IBC BANK</span><span>Acc. Name: NORWEST PRODUCE LLC</span><span>Acc. Number: 2516358520</span><span>Wire Routing: 114902528</span></section><section><strong>ADDRESS:</strong><span>1 S Broadway St</span><span>McAllen, TX. 78501</span></section></div>
           {invoicePreview.bolFileName && <a className="invoice-bol-link" href={`/api/usa/invoices?saleId=${invoicePreview.id}`} target="_blank" rel="noreferrer">BOL adjunto: {invoicePreview.bolFileName}</a>}
-          <p className="document-terms"><strong>Good Delivery Standards.</strong> Any claims for quality must be made within 24 hours of arrival at destination and supported by a timely federal inspection. The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930. Past due balances accrue interest at 1.5% per month. No adjustments will be honored unless the seller is notified as stated herein.</p>
+          <p className="document-terms invoice-terms">{INVOICE_TERMS}</p>
         </article>
       </section></div>}
 
       {socPreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
         <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Sales Order Confirmation {socPreview.pickupNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => setSocPreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
         <article className="print-document commercial-document soc-document">
-          <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>NORWEST PRODUCE LLC</strong><span>710 LAUREL AVENUE</span><span>MCALLEN, TX 78501</span></div></div><div className="document-title-block soc-title"><h3>SALES CONFIRMATION</h3><dl><dt>ORDER #:</dt><dd>{socPreview.pickupNumber}</dd><dt>DATE:</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></dl></div></div>
+          <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block soc-title"><h3>SALES CONFIRMATION</h3><dl><dt>ORDER #:</dt><dd>{socPreview.pickupNumber}</dd><dt>DATE:</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></dl></div></div>
           <div className="document-parties three-columns"><section><h4>CUSTOMER:</h4><strong>{socPreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{socPreview.warehouse}</strong><span>{documentWarehouse?.address || "Destination address pending"}</span></section><section><h4>WAREHOUSE:</h4><strong>{documentWarehouse?.name || socPreview.warehouse}</strong>{documentWarehouse && <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></>}</section></div>
           <dl className="soc-order-meta"><div><dt>P.O. Date</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></div><div><dt>P.O. #</dt><dd>{socPreview.purchaseOrder || "N/A"}</dd></div><div><dt>P.U. #</dt><dd>{socPreview.pickupNumber}</dd></div><div><dt>Buyer</dt><dd>{documentCustomer?.contactName || "Pending"}</dd></div><div><dt>Ship Terms</dt><dd>{socPreview.warehouse}</dd></div><div><dt>Payment Terms</dt><dd>21 Days</dd></div></dl>
           <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody><tr><td>{socPreview.product}</td><td>{socPreview.size || "—"}</td><td>{socPreview.label || "—"}</td><td>{socPreview.presentation || "—"}</td><td className="numeric">{number.format(socPreview.boxes)}</td><td className="numeric">{socPreview.salePrice == null ? "—" : money.format(socPreview.salePrice)}</td><td className="numeric">{socPreview.total == null ? "—" : money.format(socPreview.total)}</td></tr>{Array.from({ length: 4 }).map((_, index) => <tr className="empty-item-row" key={index}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{socPreview.total == null ? "—" : money.format(socPreview.total)}</td></tr></tfoot></table>

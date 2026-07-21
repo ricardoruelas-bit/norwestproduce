@@ -7,6 +7,7 @@ export type Sale = {
   inventoryLotId?: number | null;
   saleDate: string;
   customer: string;
+  sellerName?: string | null;
   purchaseOrder: string | null;
   warehouse: string;
   pickupNumber: string;
@@ -111,7 +112,34 @@ export type BusinessPartner = {
   contactName: string;
   contactEmail: string;
   contactPhone: string;
+  assignedSeller: string | null;
   createdAt?: string;
 };
 
 export type NewBusinessPartner = Omit<BusinessPartner, "id" | "organizationCode" | "createdAt">;
+
+export type CompanySettings = {
+  id: number;
+  organizationCode: string;
+  legalName: string;
+  street: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  blueBookNumber: string;
+  pacaNumber: string;
+  dunsNumber: string;
+  taxId: string;
+};
+
+export type UserAccount = {
+  id: number;
+  organizationCode: string;
+  fullName: string;
+  alias: string;
+  email: string;
+  permissions: string;
+  profitPercentage: number;
+  active: boolean;
+  createdAt?: string;
+};

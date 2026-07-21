@@ -54,6 +54,7 @@ export async function POST(request: Request) {
     }));
     const totalBoxes = normalized.reduce((sum, item) => sum + item.quantity, 0);
     const total = normalized.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    const profit = existing.purchasePrice == null ? null : total - existing.purchasePrice * totalBoxes;
     const [updated] = await db.update(sales).set({
       invoiceNumber,
       invoiceItems: JSON.stringify(normalized),
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
       label: normalized.length === 1 ? normalized[0].label || null : null,
       salePrice: normalized.length === 1 ? normalized[0].unitPrice : null,
       total,
+      profit,
     }).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).returning();
     return Response.json({ sale: updated }, { status: 201 });
   } catch (error) {

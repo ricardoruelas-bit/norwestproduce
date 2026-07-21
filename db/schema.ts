@@ -76,6 +76,7 @@ export const sales = sqliteTable(
     inventoryLotId: integer("inventory_lot_id").references(() => inventoryLots.id),
     saleDate: text("sale_date").notNull(),
     customer: text("customer").notNull(),
+    sellerName: text("seller_name"),
     purchaseOrder: text("purchase_order"),
     warehouse: text("warehouse").notNull(),
     pickupNumber: text("pickup_number").notNull(),
@@ -128,10 +129,46 @@ export const businessPartners = sqliteTable(
     contactName: text("contact_name").notNull(),
     contactEmail: text("contact_email").notNull(),
     contactPhone: text("contact_phone").notNull(),
+    assignedSeller: text("assigned_seller"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("partners_org_type_name_idx").on(table.organizationCode, table.partnerType, table.name),
     index("partners_org_tax_id_idx").on(table.organizationCode, table.taxId),
+  ],
+);
+
+export const companySettings = sqliteTable("company_settings", {
+  id: integer("id").primaryKey().default(1),
+  organizationCode: text("organization_code").notNull().default("USA"),
+  legalName: text("legal_name").notNull().default("NORWEST PRODUCE LLC"),
+  street: text("street").notNull().default("710 LAUREL AVENUE"),
+  city: text("city").notNull().default("MCALLEN"),
+  state: text("state").notNull().default("TX"),
+  postalCode: text("postal_code").notNull().default("78501"),
+  blueBookNumber: text("blue_book_number").notNull().default(""),
+  pacaNumber: text("paca_number").notNull().default(""),
+  dunsNumber: text("duns_number").notNull().default(""),
+  taxId: text("tax_id").notNull().default(""),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const userAccounts = sqliteTable(
+  "user_accounts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    organizationCode: text("organization_code").notNull().default("USA"),
+    fullName: text("full_name").notNull(),
+    alias: text("alias").notNull(),
+    email: text("email").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    permissions: text("permissions").notNull().default("[]"),
+    profitPercentage: real("profit_percentage").notNull().default(0),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("users_org_alias_idx").on(table.organizationCode, table.alias),
+    index("users_org_email_idx").on(table.organizationCode, table.email),
   ],
 );

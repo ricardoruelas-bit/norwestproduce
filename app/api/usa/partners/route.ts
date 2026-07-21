@@ -33,6 +33,7 @@ export async function POST(request: Request) {
     if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
     const phone = clean(payload.contactPhone).replace(/\D/g, "");
     if (phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
+    if ((partnerType === "CUSTOMER" || payload.alsoOppositeType) && !clean(payload.assignedSeller)) return Response.json({ error: "Selecciona el vendedor de Norwest para el cliente." }, { status: 400 });
 
     const partnerValues = {
       organizationCode: "USA",
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
       contactName: clean(payload.contactName),
       contactEmail: email,
       contactPhone: phone,
+      assignedSeller: clean(payload.assignedSeller) || null,
     };
     const db = getDb();
     if (payload.alsoOppositeType) {
@@ -83,6 +85,7 @@ export async function PATCH(request: Request) {
     if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
     const phone = clean(payload.contactPhone).replace(/\D/g, "");
     if (phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
+    if (partnerType === "CUSTOMER" && !clean(payload.assignedSeller)) return Response.json({ error: "Selecciona el vendedor de Norwest para el cliente." }, { status: 400 });
     const [updated] = await getDb().update(businessPartners).set({
       partnerType,
       name: clean(payload.name),
@@ -100,6 +103,7 @@ export async function PATCH(request: Request) {
       contactName: clean(payload.contactName),
       contactEmail: email,
       contactPhone: phone,
+      assignedSeller: clean(payload.assignedSeller) || null,
     }).where(and(eq(businessPartners.id, id), eq(businessPartners.organizationCode, "USA"))).returning();
     if (!updated) return Response.json({ error: "Registro no encontrado." }, { status: 404 });
     return Response.json({ partner: updated });

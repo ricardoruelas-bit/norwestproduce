@@ -37,6 +37,7 @@ a { color:inherit; text-decoration:none; }
 .erp-shell { min-height:100vh; background:var(--paper); }
 .sidebar { position:fixed; inset:0 auto 0 0; z-index:5; display:flex; width:242px; flex-direction:column; padding:27px 19px 22px; border-right:1px solid #dce6e2; background:#fff; }
 .sidebar-brand { display:flex; align-items:center; gap:11px; padding:0 8px 28px; }
+.sidebar-logo { display:block; width:100%; max-width:188px; height:auto; object-fit:contain; }
 .sidebar-brand strong { display:block; font-family:Georgia,serif; font-size:18px; letter-spacing:.06em; line-height:1; }
 .sidebar-brand small { display:block; margin-top:5px; color:var(--green); font-size:8px; font-weight:800; letter-spacing:.21em; }
 .mini-mark { position:relative; width:35px; height:35px; overflow:hidden; border-radius:10px; background:linear-gradient(#9bd8eb 0 47%,#f5b51b 48% 60%,#007f71 61%); }
@@ -189,5 +190,32 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
   .print-document { position:absolute; inset:0; width:8.5in; min-height:11in; margin:0; padding:.55in .6in .45in; box-shadow:none; }
   .document-title-block h3,.document-parties h4,.soc-order-meta dt { background:#2f6f6a!important; color:#fff!important; }
   .commercial-document .document-items .empty-item-row td { background:#f5f5f5!important; }
-  .invoice-bol-link{display:none!important}
+.invoice-bol-link{display:none!important}
+}
+
+.invoice-terms { margin-top:28px; font-size:5.75px; line-height:1.16; text-align:justify; }
+.settings-layout { display:grid; gap:18px; max-width:1550px; margin:0 auto; }
+.settings-card { padding-bottom:20px; }
+.settings-form-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:4px 22px 8px; }
+.settings-form-grid label { display:flex; flex-direction:column; gap:6px; color:#60716d; font-size:10px; font-weight:750; }
+.settings-form-grid input { height:39px; padding:0 10px; border:1px solid #dce5e2; border-radius:9px; outline:0; background:#fff; color:var(--ink); font-size:12px; }
+.settings-form-grid input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(0,127,113,.09); }
+.settings-form-grid .span-2 { grid-column:span 2; }
+.settings-actions { display:flex; justify-content:flex-end; padding:6px 22px 0; }
+.settings-message { padding:0 22px; color:var(--green-dark); }
+.settings-users-table { max-height:420px; }.settings-users-table table{min-width:900px}
+.user-modal { width:min(920px,100%); }
+.user-active-check { flex-direction:row!important; align-items:center; align-self:end; height:39px; }
+.user-active-check input { width:17px!important; height:17px!important; accent-color:var(--green); }
+.permissions-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
+.permissions-grid label { display:flex; align-items:center; gap:8px; padding:11px; border:1px solid #dce5e2; border-radius:9px; background:#fff; color:#526762; font-size:10px; font-weight:700; }
+.permissions-grid input { accent-color:var(--green); }
+
+@media(max-width:1050px){.settings-form-grid{grid-template-columns:1fr 1fr}.permissions-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.settings-form-grid{grid-template-columns:1fr}.settings-form-grid .span-2{grid-column:auto}.permissions-grid{grid-template-columns:1fr}}
+
+@media print {
+  .document-title-block h3,.document-parties h4,.soc-order-meta dt { background-color:#2f6f6a!important; box-shadow:inset 0 0 0 1000px #2f6f6a!important; }
+  .commercial-document .document-items .empty-item-row td { background-color:#f5f5f5!important; box-shadow:inset 0 0 0 1000px #f5f5f5!important; }
+  .invoice-terms { margin-top:24px!important; font-size:5.55px!important; line-height:1.14!important; }
 }
