@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceAdjustment, InvoiceItem, PartnerType, Product, Sale, UserAccount } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -168,6 +168,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [productDetailItems, setProductDetailItems] = useState<InvoiceItem[]>([]);
   const [productDetailSaveState, setProductDetailSaveState] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
+  const [expandedCatalogProducts, setExpandedCatalogProducts] = useState<string[]>([]);
   const [productModal, setProductModal] = useState(false);
   const [productForm, setProductForm] = useState(blankProduct);
   const [productSaveState, setProductSaveState] = useState("");
@@ -1052,6 +1053,21 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       && (operationFilters.includes("TODAS") || operationFilters.includes(row.operationType));
   }), [salesRows, query, statusFilters, operationFilters]);
 
+  const productCatalogGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; name: string; alias: string; variants: Product[] }>();
+    products.forEach((product) => {
+      const key = product.name.trim().toLocaleLowerCase();
+      const group = groups.get(key);
+      if (group) group.variants.push(product);
+      else groups.set(key, { key, name: product.name, alias: product.alias, variants: [product] });
+    });
+    return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [products]);
+
+  function toggleCatalogProduct(key: string) {
+    setExpandedCatalogProducts((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
+  }
+
   const totals = useMemo(() => {
     const today = localDateKey();
     const currentMonth = today.slice(0, 7);
@@ -1165,12 +1181,26 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <button className={`catalog-type-card ${partnerTypeFilter === "SUPPLIER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("SUPPLIER")}><span className="catalog-icon">⇄</span><div><strong>Proveedores</strong><small>{partners.filter((partner) => partner.partnerType === "SUPPLIER").length} registrados</small></div></button>
           <button className={`catalog-type-card ${partnerTypeFilter === "CUSTOMER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("CUSTOMER")}><span className="catalog-icon customer">◎</span><div><strong>Clientes</strong><small>{partners.filter((partner) => partner.partnerType === "CUSTOMER").length} registrados</small></div></button>
           <button className={`catalog-type-card ${partnerTypeFilter === "WAREHOUSE" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("WAREHOUSE")}><span className="catalog-icon warehouse">▣</span><div><strong>Bodegas</strong><small>{coldStorages.length} registradas</small></div></button>
-          <button className={`catalog-type-card ${partnerTypeFilter === "PRODUCT" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("PRODUCT")}><span className="catalog-icon product">▦</span><div><strong>Productos</strong><small>{products.length} registrados</small></div></button>
+          <button className={`catalog-type-card ${partnerTypeFilter === "PRODUCT" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("PRODUCT")}><span className="catalog-icon product">▦</span><div><strong>Productos</strong><small>{productCatalogGroups.length} registrados</small></div></button>
         </section>
         {partnerTypeFilter === "PRODUCT" ? <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>Productos</h2><p>Productos, presentaciones, tamaños y etiquetas disponibles para ventas e inventario.</p></div><button className="primary-button" onClick={() => openProductForm("catalog")}>＋ Alta de producto</button></div>
-          <div className="table-wrap catalog-table products-catalog-table"><table><thead><tr><th>Producto</th><th>Alias</th><th>Presentación</th><th>Tamaño</th><th>Etiqueta</th></tr></thead>
-            <tbody>{products.map((product) => <tr key={product.id}><td><strong>{product.name}</strong></td><td><span className="product-alias-chip">{product.alias}</span></td><td>{product.presentation || "—"}</td><td>{product.size || "—"}</td><td>{product.label || "—"}</td></tr>)}</tbody></table></div>
+          <div className="table-wrap catalog-table products-catalog-table"><table><thead><tr><th>Producto</th><th>Alias</th><th>Variantes registradas</th></tr></thead>
+            <tbody>{productCatalogGroups.map((group) => {
+              const expanded = expandedCatalogProducts.includes(group.key);
+              const detailsId = `product-variants-${group.variants[0].id}`;
+              return <Fragment key={group.key}>
+                <tr className={`product-group-row ${expanded ? "expanded" : ""}`} onClick={() => toggleCatalogProduct(group.key)}>
+                  <td><button type="button" className="product-expand-button" aria-expanded={expanded} aria-controls={detailsId}><span className="product-expand-chevron">›</span><strong>{group.name}</strong></button></td>
+                  <td><span className="product-alias-chip">{group.alias}</span></td>
+                  <td><button type="button" className="product-variant-count">{group.variants.length} {group.variants.length === 1 ? "variante" : "variantes"}<small>{expanded ? "Ocultar detalle" : "Ver detalle"}</small></button></td>
+                </tr>
+                {expanded && <tr className="product-variants-row" id={detailsId}><td colSpan={3}><div className="product-variants-list">
+                  <div className="product-variant-head"><span>Presentación</span><span>Tamaño</span><span>Etiqueta</span></div>
+                  {group.variants.map((variant) => <div className="product-variant-item" key={variant.id}><span>{variant.presentation || "—"}</span><span>{variant.size || "—"}</span><span>{variant.label || "—"}</span></div>)}
+                </div></td></tr>}
+              </Fragment>;
+            })}</tbody></table></div>
           {products.length === 0 && <div className="catalog-empty"><strong>Aún no hay productos registrados</strong><span>Usa “Alta de producto” o agrega uno desde una venta.</span></div>}
         </section> : partnerTypeFilter === "WAREHOUSE" ? <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>Bodegas</h2><p>Catálogo de bodegas de destino de la operación USA</p></div><button className="primary-button" onClick={() => openColdStorageForm("catalog")}>＋ Alta de bodega</button></div>
