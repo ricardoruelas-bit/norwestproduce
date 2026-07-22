@@ -180,6 +180,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [, setTotalBoxesManual] = useState(false);
   const [coldStorages, setColdStorages] = useState<ColdStorage[]>([]);
   const [coldStorageModal, setColdStorageModal] = useState(false);
+  const [coldStorageTarget, setColdStorageTarget] = useState<"inventory" | "sale">("inventory");
   const [coldStorageForm, setColdStorageForm] = useState(blankColdStorage);
   const [coldStorageSaveState, setColdStorageSaveState] = useState("");
   const [companyForm, setCompanyForm] = useState(blankCompany);
@@ -460,7 +461,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     void Promise.all([loadCaptureCatalogs(), loadExpenseConcepts()]);
   }
 
-  function openColdStorageForm() {
+  function openColdStorageForm(target: "inventory" | "sale" = "inventory") {
+    setColdStorageTarget(target);
     setColdStorageForm(blankColdStorage);
     setColdStorageSaveState("");
     setColdStorageModal(true);
@@ -474,7 +476,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar el cold storage.");
       setColdStorages((current) => [...current, data.coldStorage].sort((a, b) => a.name.localeCompare(b.name)));
-      setInventoryForm((current) => ({ ...current, coldStorage: data.coldStorage.name, warehouse: data.coldStorage.name }));
+      if (coldStorageTarget === "sale") {
+        setForm((current) => ({ ...current, warehouse: data.coldStorage.name }));
+      } else {
+        setInventoryForm((current) => ({ ...current, coldStorage: data.coldStorage.name, warehouse: data.coldStorage.name }));
+      }
       setColdStorageModal(false);
       setColdStorageSaveState("");
     } catch (error) {
@@ -483,9 +489,15 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   }
 
   function chooseColdStorage(value: string) {
-    if (value === "__new__") return openColdStorageForm();
+    if (value === "__new__") return openColdStorageForm("inventory");
     const selected = coldStorages.find((item) => String(item.id) === value);
     setInventoryForm((current) => ({ ...current, coldStorage: selected?.name || "", warehouse: selected?.name || "" }));
+  }
+
+  function chooseSaleWarehouse(value: string) {
+    if (value === "__new__") return openColdStorageForm("sale");
+    const selected = coldStorages.find((item) => String(item.id) === value);
+    setForm((current) => ({ ...current, warehouse: selected?.name || "" }));
   }
 
   function updatePalletCalculation(field: "boxesPerPallet" | "palletsPerLoad", value: string) {
@@ -926,9 +938,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   }
 
   function pickupTiming(value: string | null, saleDate?: string | null) {
-    if (!value || value === saleDate) return "";
+    if (!value) return "";
     const today = localDateKey();
-    if (value === today) return "pickup-today";
+    if (value === today) return "pickup-current-row";
+    if (value === saleDate) return "";
     if (value < today) return "pickup-past";
     return "";
   }
@@ -1118,7 +1131,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Editar</th></tr></thead>
             <tbody>{filtered.map((row, index) => { return <tr className={saleRowClass(row)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
-              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate, row.saleDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate, row.saleDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
+              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate, row.saleDate) === "pickup-current-row" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate, row.saleDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.invoiceNumber ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>{money.format(invoiceItemsFor(row)[0]?.unitPrice ?? row.salePrice ?? 0)}</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
               <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select disabled={Boolean(row.invoiceNumber)} title={row.invoiceNumber ? "El estatus queda bloqueado al facturar" : undefined} className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" disabled={Boolean(row.invoiceNumber)} className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <><button type="button" className="edit-button" onClick={() => openEditSale(row)}>Editar</button><button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Eliminar</button></> : <span className="muted">—</span>}</div></td>
@@ -1265,7 +1278,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           </section>}
 
           {(form.operationType === "DIRECT_RESALE" || selectedLot) && <section className="form-section sale-section"><div className="form-section-heading"><span>2</span><div><h3>Información de la venta</h3><p>Datos del cliente, entrega y precio de venta.</p></div></div>
-            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega / destino<input required value={form.warehouse} onChange={(e) => setForm({...form, warehouse:e.target.value})} placeholder="Ej. PROFRESH" /></label>{form.operationType === "IMPORTED_INVENTORY" && <><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta<input required min="0" step="0.01" type="number" value={form.salePrice} onChange={(e) => setForm({...form, salePrice:e.target.value})} /></label></>}<label>Día de pickup<input type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /></label></div>
+            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega Destino<select required value={coldStorages.find((item) => item.name === form.warehouse)?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{form.warehouse && !coldStorages.some((item) => item.name === form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar bodega</option></select></label>{form.operationType === "IMPORTED_INVENTORY" && <><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta<input required min="0" step="0.01" type="number" value={form.salePrice} onChange={(e) => setForm({...form, salePrice:e.target.value})} /></label></>}<label>Día de pickup<input type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /></label></div>
           </section>}
           <div className="form-total"><span>Total calculado</span><strong>{form.operationType === "DIRECT_RESALE" ? money.format(saleLineItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)) : form.boxes && form.salePrice ? money.format(Number(form.boxes) * Number(form.salePrice)) : "$0.00"}</strong></div>
           {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !selectedLot}>{editingSale ? "Guardar cambios" : "Guardar venta"}</button></div>
@@ -1285,9 +1298,9 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       </form></div>}
 
       {coldStorageModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveColdStorage}>
-        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar cold storage</h2><p className="modal-intro">Al guardarlo regresarás a la entrada con este destino seleccionado.</p></div></div>
-        <section className="form-section"><div className="form-grid"><label>Nombre del cold storage *<input required value={coldStorageForm.name} onChange={(e) => setColdStorageForm({...coldStorageForm, name:e.target.value})} /></label><label className="span-2">Dirección *<input required value={coldStorageForm.address} onChange={(e) => setColdStorageForm({...coldStorageForm, address:e.target.value})} /></label><label>Teléfono *<input required type="tel" inputMode="numeric" minLength={10} maxLength={10} pattern="[0-9]{10}" placeholder="10 dígitos" value={coldStorageForm.phone} onChange={(e) => setColdStorageForm({...coldStorageForm, phone:e.target.value.replace(/\D/g, "").slice(0, 10)})} /></label></div></section>
-        {coldStorageSaveState && <p className="form-message">{coldStorageSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setColdStorageModal(false)}>Cancelar</button><button type="submit" className="primary-button">Registrar cold storage</button></div>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar bodega</h2><p className="modal-intro">Al guardarla regresarás a {coldStorageTarget === "sale" ? "la venta" : "la entrada de inventario"} con esta bodega seleccionada.</p></div></div>
+        <section className="form-section"><div className="form-grid"><label>Nombre de la bodega *<input required value={coldStorageForm.name} onChange={(e) => setColdStorageForm({...coldStorageForm, name:e.target.value})} /></label><label className="span-2">Dirección *<input required value={coldStorageForm.address} onChange={(e) => setColdStorageForm({...coldStorageForm, address:e.target.value})} /></label><label>Teléfono *<input required type="tel" inputMode="numeric" minLength={10} maxLength={10} pattern="[0-9]{10}" placeholder="10 dígitos" value={coldStorageForm.phone} onChange={(e) => setColdStorageForm({...coldStorageForm, phone:e.target.value.replace(/\D/g, "").slice(0, 10)})} /></label></div></section>
+        {coldStorageSaveState && <p className="form-message">{coldStorageSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setColdStorageModal(false)}>Cancelar</button><button type="submit" className="primary-button">Registrar bodega</button></div>
       </form></div>}
 
       {productModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveProduct}>
