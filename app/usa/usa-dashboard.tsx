@@ -14,7 +14,7 @@ const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on thi
 const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be made within 24 hours of arrival at destination and must be supported with a timely federal inspection fo the complete lot in question. We reserve the right to deny credit. Negotiated under P.A.C.A. terms. INTEREST WILL ACCRUE ON ANY PAST BALANCE AT THE RATE OF 1.5% PER MONTH (18% PER ANNUM.) The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
 type Section = "dashboard" | "catalogs" | "inventory" | "invoicing" | "settings";
-type CatalogType = PartnerType | "WAREHOUSE";
+type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
@@ -172,7 +172,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [productForm, setProductForm] = useState(blankProduct);
   const [productSaveState, setProductSaveState] = useState("");
   const [partnerTarget, setPartnerTarget] = useState<PartnerTarget>(null);
-  const [productTarget, setProductTarget] = useState<"sale" | "inventory" | null>(null);
+  const [productTarget, setProductTarget] = useState<"sale" | "inventory" | "catalog" | null>(null);
   const [productTargetLine, setProductTargetLine] = useState<number | null>(null);
   const [additionalExpenses, setAdditionalExpenses] = useState<Array<{ concept: string; amount: string; currency: Currency }>>([]);
   const [expenseConcepts, setExpenseConcepts] = useState<string[]>([]);
@@ -337,7 +337,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   async function openCatalogs() {
     setSection("catalogs");
-    await Promise.all([loadPartners(), loadColdStorages()]);
+    await Promise.all([loadPartners(), loadColdStorages(), loadProducts()]);
   }
 
   async function openPartnerForm(type: PartnerType, target: PartnerTarget = null) {
@@ -832,7 +832,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     if (sale.operationType === "IMPORTED_INVENTORY") void loadInventory(true);
   }
 
-  function openProductForm(target: "sale" | "inventory", lineIndex: number | null = null, seed: Partial<typeof blankProduct> = {}) {
+  function openProductForm(target: "sale" | "inventory" | "catalog", lineIndex: number | null = null, seed: Partial<typeof blankProduct> = {}) {
     setProductTarget(target);
     setProductTargetLine(lineIndex);
     setProductForm({ ...blankProduct, ...seed });
@@ -1165,8 +1165,14 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <button className={`catalog-type-card ${partnerTypeFilter === "SUPPLIER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("SUPPLIER")}><span className="catalog-icon">⇄</span><div><strong>Proveedores</strong><small>{partners.filter((partner) => partner.partnerType === "SUPPLIER").length} registrados</small></div></button>
           <button className={`catalog-type-card ${partnerTypeFilter === "CUSTOMER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("CUSTOMER")}><span className="catalog-icon customer">◎</span><div><strong>Clientes</strong><small>{partners.filter((partner) => partner.partnerType === "CUSTOMER").length} registrados</small></div></button>
           <button className={`catalog-type-card ${partnerTypeFilter === "WAREHOUSE" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("WAREHOUSE")}><span className="catalog-icon warehouse">▣</span><div><strong>Bodegas</strong><small>{coldStorages.length} registradas</small></div></button>
+          <button className={`catalog-type-card ${partnerTypeFilter === "PRODUCT" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("PRODUCT")}><span className="catalog-icon product">▦</span><div><strong>Productos</strong><small>{products.length} registrados</small></div></button>
         </section>
-        {partnerTypeFilter === "WAREHOUSE" ? <section className="sales-panel catalog-panel">
+        {partnerTypeFilter === "PRODUCT" ? <section className="sales-panel catalog-panel">
+          <div className="panel-heading"><div><h2>Productos</h2><p>Productos, presentaciones, tamaños y etiquetas disponibles para ventas e inventario.</p></div><button className="primary-button" onClick={() => openProductForm("catalog")}>＋ Alta de producto</button></div>
+          <div className="table-wrap catalog-table products-catalog-table"><table><thead><tr><th>Producto</th><th>Alias</th><th>Presentación</th><th>Tamaño</th><th>Etiqueta</th></tr></thead>
+            <tbody>{products.map((product) => <tr key={product.id}><td><strong>{product.name}</strong></td><td><span className="product-alias-chip">{product.alias}</span></td><td>{product.presentation || "—"}</td><td>{product.size || "—"}</td><td>{product.label || "—"}</td></tr>)}</tbody></table></div>
+          {products.length === 0 && <div className="catalog-empty"><strong>Aún no hay productos registrados</strong><span>Usa “Alta de producto” o agrega uno desde una venta.</span></div>}
+        </section> : partnerTypeFilter === "WAREHOUSE" ? <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>Bodegas</h2><p>Catálogo de bodegas de destino de la operación USA</p></div><button className="primary-button" onClick={() => openColdStorageForm("catalog")}>＋ Alta de bodega</button></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>Dirección</th><th>Teléfono</th><th></th></tr></thead>
             <tbody>{coldStorages.map((coldStorage) => <tr key={coldStorage.id}><td><strong>{coldStorage.name}</strong></td><td>{coldStorage.address}</td><td>{coldStorage.phone}</td><td><button type="button" className="edit-button" onClick={() => openColdStorageForm("catalog", coldStorage)}>Editar</button></td></tr>)}</tbody></table></div>
@@ -1330,7 +1336,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       </form></div>}
 
       {productModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveProduct}>
-        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar nuevo producto</h2><p className="modal-intro">Al guardarlo regresarás a la captura anterior con el producto seleccionado.</p></div></div>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar nuevo producto</h2><p className="modal-intro">{productTarget === "catalog" ? "El producto quedará disponible para ventas e inventario." : "Al guardarlo regresarás a la captura anterior con el producto seleccionado."}</p></div></div>
         <section className="form-section"><div className="form-grid"><label>Producto *<input required value={productForm.name} onChange={(e) => setProductForm({...productForm, name:e.target.value})} /></label><label>Alias *<input required maxLength={3} pattern="[A-Za-z]{1,3}" title="De 1 a 3 letras" value={productForm.alias} onChange={(e) => setProductForm({...productForm, alias:e.target.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 3)})} placeholder="Máx. 3 letras" /></label><label>Presentación<input value={productForm.presentation} onChange={(e) => setProductForm({...productForm, presentation:e.target.value})} placeholder="Ej. caja 25 lb" /></label><label>Tamaño<input value={productForm.size} onChange={(e) => setProductForm({...productForm, size:e.target.value})} /></label><label>Etiqueta<input value={productForm.label} onChange={(e) => setProductForm({...productForm, label:e.target.value})} /></label></div></section>
         {productSaveState && <p className="form-message">{productSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setProductModal(false); setProductTarget(null); setProductTargetLine(null); }}>Cancelar</button><button type="submit" className="primary-button">Registrar producto</button></div>
       </form></div>}
