@@ -148,6 +148,7 @@ export async function PATCH(request: Request) {
       const [existing] = await db.select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
       if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
       if (existing.canceledAt) return Response.json({ error: "Esta venta ya está cancelada." }, { status: 409 });
+      if (existing.invoiceNumber) return Response.json({ error: "Una venta facturada no puede eliminarse. Utiliza Crear ajuste desde la factura." }, { status: 409 });
       const canceledAt = new Date().toISOString();
       const [sale] = await db.update(sales).set({ canceledAt, canceledBy, cancellationReason, cancellationDetail: cancellationReason })
         .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.canceledAt))).returning();
@@ -259,9 +260,10 @@ export async function PATCH(request: Request) {
       return Response.json({ sale });
     }
     if (typeof payload.loadStatus === "string") {
-      const [existing] = await getDb().select({ canceledAt: sales.canceledAt }).from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
+      const [existing] = await getDb().select({ canceledAt: sales.canceledAt, invoiceNumber: sales.invoiceNumber }).from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
       if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
       if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede modificarse." }, { status: 409 });
+      if (existing.invoiceNumber) return Response.json({ error: "El estatus de una venta facturada ya no puede modificarse." }, { status: 409 });
       const loadStatus = payload.loadStatus.trim().toUpperCase();
       if (!LOAD_STATUSES.has(loadStatus)) return Response.json({ error: "Estatus inválido." }, { status: 400 });
       const now = new Date().toISOString();

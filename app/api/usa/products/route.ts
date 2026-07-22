@@ -23,8 +23,14 @@ export async function POST(request: Request) {
     if (!clean(payload.name)) return Response.json({ error: "Ingresa el nombre del producto." }, { status: 400 });
     const alias = clean(payload.alias).toUpperCase();
     if (!/^[A-Z]{1,3}$/.test(alias)) return Response.json({ error: "El alias debe tener de 1 a 3 letras." }, { status: 400 });
-    const duplicate = await getDb().select({ id: products.id }).from(products).where(and(eq(products.organizationCode, "USA"), eq(products.alias, alias))).limit(1);
-    if (duplicate.length) return Response.json({ error: "Ese alias ya está asignado a otro producto." }, { status: 409 });
+    const existingAlias = await getDb().select().from(products).where(and(eq(products.organizationCode, "USA"), eq(products.alias, alias)));
+    if (existingAlias.some((item) => item.name.toLocaleLowerCase() !== clean(payload.name).toLocaleLowerCase())) return Response.json({ error: "Ese alias ya está asignado a otro producto." }, { status: 409 });
+    if (existingAlias.some((item) => item.name.toLocaleLowerCase() === clean(payload.name).toLocaleLowerCase()
+      && (item.presentation || "").toLocaleLowerCase() === clean(payload.presentation).toLocaleLowerCase()
+      && (item.size || "").toLocaleLowerCase() === clean(payload.size).toLocaleLowerCase()
+      && (item.label || "").toLocaleLowerCase() === clean(payload.label).toLocaleLowerCase())) {
+      return Response.json({ error: "Esta combinación de producto, presentación, tamaño y etiqueta ya existe." }, { status: 409 });
+    }
     const [product] = await getDb().insert(products).values({
       organizationCode: "USA",
       name: clean(payload.name),
