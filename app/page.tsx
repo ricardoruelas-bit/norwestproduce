@@ -6,9 +6,8 @@ export default function Home() {
       <div className="gateway-glow gateway-glow-one" />
       <div className="gateway-glow gateway-glow-two" />
       <section className="gateway-panel">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-          <div><strong>NORWEST</strong><small>PRODUCE</small></div>
+        <div className="brand-lockup gateway-brand-lockup">
+          <img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" />
         </div>
         <p className="eyebrow">Sistema administrativo</p>
         <h1>Selecciona la operación</h1>
@@ -38,4 +37,3 @@ export default function Home() {
     </main>
   );
 }
-
