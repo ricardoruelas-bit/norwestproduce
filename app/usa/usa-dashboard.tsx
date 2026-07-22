@@ -70,7 +70,7 @@ function invoiceItemsFor(sale: Sale): InvoiceItem[] {
       if (Array.isArray(parsed) && parsed.length) return parsed;
     } catch { /* Fall back to the original sale row. */ }
   }
-  return [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice || 0 }];
+  return [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice || 0, purchasePrice: sale.purchasePrice ?? undefined }];
 }
 
 function originalInvoiceItemsFor(sale: Sale): InvoiceItem[] {
@@ -133,6 +133,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [modalStep, setModalStep] = useState<"closed" | "choose" | "form">("closed");
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [form, setForm] = useState(blankSale);
+  const [saleLineItems, setSaleLineItems] = useState<InvoiceItem[]>([]);
   const [saveState, setSaveState] = useState("");
   const [section, setSection] = useState<Section>("dashboard");
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
@@ -192,6 +193,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [usdaFile, setUsdaFile] = useState<File | null>(null);
   const [statusSaveState, setStatusSaveState] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [cancelSale, setCancelSale] = useState<Sale | null>(null);
+  const [cancelParty, setCancelParty] = useState<"CLIENTE CANCELÓ" | "NW CANCELÓ">("CLIENTE CANCELÓ");
+  const [cancelReason, setCancelReason] = useState("Sin Razón");
+  const [cancelSaveState, setCancelSaveState] = useState("");
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
@@ -737,6 +742,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function openNewSale() {
     setEditingSale(null);
     setForm({ ...blankSale, saleDate: localDateKey() });
+    setSaleLineItems([]);
     setSaveState("");
     setModalStep("choose");
     void loadCaptureCatalogs();
@@ -745,6 +751,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function openEditSale(sale: Sale) {
     if (!sale.id || sale.invoiceNumber) return;
     setEditingSale(sale);
+    setSaleLineItems(invoiceItemsFor(sale).map((item) => ({ ...item, purchasePrice: item.purchasePrice ?? sale.purchasePrice ?? 0 })));
     setForm({
       saleDate: sale.saleDate,
       operationType: sale.operationType,
@@ -786,7 +793,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar el producto.");
       setProducts((current) => [...current, data.product].sort((a, b) => a.name.localeCompare(b.name)));
-      if (productTarget === "sale") setForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" }));
+      if (productTarget === "sale") {
+        if (form.operationType === "DIRECT_RESALE") setSaleLineItems((current) => [...current, { product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "", quantity: 1, purchasePrice: 0, unitPrice: 0 }]);
+        else setForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" }));
+      }
       if (productTarget === "inventory") setInventoryForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" }));
       setProductModal(false);
       setProductTarget(null);
@@ -804,9 +814,66 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     else setInventoryForm((current) => ({ ...current, product: product.name, presentation: product.presentation || "", size: product.size || "", label: product.label || "" }));
   }
 
+  function addSaleLineItem(productId?: string) {
+    const product = products.find((item) => String(item.id) === productId) || products[0];
+    if (!product) return;
+    setSaleLineItems((current) => [...current, {
+      product: product.name,
+      presentation: product.presentation || "",
+      size: product.size || "",
+      label: product.label || "",
+      quantity: 1,
+      purchasePrice: 0,
+      unitPrice: 0,
+    }]);
+  }
+
+  function changeSaleLineProduct(index: number, productId: string) {
+    if (productId === "__new__") return openProductForm("sale");
+    const product = products.find((item) => String(item.id) === productId);
+    if (!product) return;
+    setSaleLineItems((current) => current.map((item, itemIndex) => itemIndex === index ? {
+      ...item,
+      product: product.name,
+      presentation: product.presentation || "",
+      size: product.size || "",
+      label: product.label || "",
+    } : item));
+  }
+
+  function updateSaleLineItem(index: number, changes: Partial<InvoiceItem>) {
+    setSaleLineItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
+  }
+
+  const customerCancellationReasons = ["Sin Razón", "Compró en otro lado", "Consiguió mejor precio", "No consiguió camión", "Canceló su cliente", "No le gustó la calidad"];
+  const nwCancellationReasons = ["Producto no disponible", "Producto sin calidad", "Producto llegará tarde"];
+
+  function openCancelSale(sale: Sale) {
+    setCancelSale(sale);
+    setCancelParty("CLIENTE CANCELÓ");
+    setCancelReason("Sin Razón");
+    setCancelSaveState("");
+  }
+
+  async function confirmCancelSale(event: FormEvent) {
+    event.preventDefault();
+    if (!cancelSale?.id) return;
+    setCancelSaveState("Guardando cancelación…");
+    try {
+      const response = await fetch("/api/usa/sales", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: cancelSale.id, cancelSale: true, canceledBy: cancelParty, cancellationReason: cancelReason }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo cancelar la venta.");
+      setSalesRows((current) => current.map((sale) => sale.id === data.sale.id ? data.sale : sale));
+      setCancelSale(null);
+    } catch (error) {
+      setCancelSaveState(error instanceof Error ? error.message : "No se pudo cancelar la venta.");
+    }
+  }
+
   function chooseOperation(type: Operation) {
     setEditingSale(null);
     setForm({ ...blankSale, saleDate: localDateKey(), operationType: type });
+    setSaleLineItems([]);
     setSaveState("");
     if (type === "IMPORTED_INVENTORY") void loadInventory();
     setModalStep("form");
@@ -815,6 +882,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function closeModal() {
     setModalStep("closed");
     setEditingSale(null);
+    setSaleLineItems([]);
     setSaveState("");
   }
 
@@ -874,15 +942,16 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const filtered = useMemo(() => salesRows.filter((row) => {
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
     return text.includes(query.toLowerCase())
-      && (status === "TODOS" || (status === "SIN FACTURA" ? !row.invoiceNumber : row.loadStatus === status))
+      && (status === "TODOS" || (status === "SIN FACTURA" ? !row.invoiceNumber && !row.canceledAt : status === "CANCELADAS" ? Boolean(row.canceledAt) : row.loadStatus === status && !row.canceledAt))
       && (operationType === "TODAS" || row.operationType === operationType);
   }), [salesRows, query, status, operationType]);
 
   const totals = useMemo(() => {
     const today = localDateKey();
     const currentMonth = today.slice(0, 7);
-    const todayRows = salesRows.filter((row) => row.saleDate === today);
-    const monthRows = salesRows.filter((row) => row.saleDate.startsWith(currentMonth));
+    const activeRows = salesRows.filter((row) => !row.canceledAt);
+    const todayRows = activeRows.filter((row) => row.saleDate === today);
+    const monthRows = activeRows.filter((row) => row.saleDate.startsWith(currentMonth));
     return {
       todaySales: todayRows.reduce((sum, row) => sum + (row.total ?? 0), 0),
       monthSales: monthRows.reduce((sum, row) => sum + (row.total ?? 0), 0),
@@ -890,7 +959,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       monthBoxes: monthRows.reduce((sum, row) => sum + row.boxes, 0),
       todayProfit: todayRows.reduce((sum, row) => sum + (row.profit ?? 0), 0),
       monthProfit: monthRows.reduce((sum, row) => sum + (row.profit ?? 0), 0),
-      uninvoiced: salesRows.filter((row) => !row.invoiceNumber).reduce((sum, row) => sum + (row.total ?? 0), 0),
+      uninvoiced: activeRows.filter((row) => !row.invoiceNumber).reduce((sum, row) => sum + (row.total ?? 0), 0),
     };
   }, [salesRows]);
 
@@ -909,12 +978,24 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   async function saveSale(event: FormEvent) {
     event.preventDefault();
+    if (form.operationType === "DIRECT_RESALE" && (!saleLineItems.length || saleLineItems.some((item) => !item.product || !Number.isInteger(Number(item.quantity)) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.purchasePrice)) || Number(item.purchasePrice) < 0 || !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0))) {
+      setSaveState("Agrega al menos un producto y revisa cajas, precio de compra y precio de venta.");
+      return;
+    }
+    const firstLine = saleLineItems[0];
+    const directBoxes = saleLineItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
     setSaveState("Guardando…");
     const payload = {
       saleDate: form.saleDate, operationType: form.operationType, supplier: form.supplier, inventoryLotId: form.inventoryLotId ? Number(form.inventoryLotId) : null,
       customer: form.customer, sellerName: form.sellerName || null, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse, pickupNumber: form.pickupNumber,
-      boxes: Number(form.boxes), product: form.product, presentation: form.presentation, size: form.size, label: form.label,
-      purchasePrice: form.purchasePrice ? Number(form.purchasePrice) : null, salePrice: form.salePrice ? Number(form.salePrice) : null,
+      boxes: form.operationType === "DIRECT_RESALE" ? directBoxes : Number(form.boxes),
+      product: form.operationType === "DIRECT_RESALE" ? (firstLine?.product || "") : form.product,
+      presentation: form.operationType === "DIRECT_RESALE" ? (firstLine?.presentation || "") : form.presentation,
+      size: form.operationType === "DIRECT_RESALE" ? (firstLine?.size || "") : form.size,
+      label: form.operationType === "DIRECT_RESALE" ? (firstLine?.label || "") : form.label,
+      purchasePrice: form.operationType === "DIRECT_RESALE" ? (firstLine?.purchasePrice ?? null) : (form.purchasePrice ? Number(form.purchasePrice) : null),
+      salePrice: form.operationType === "DIRECT_RESALE" ? (firstLine?.unitPrice ?? null) : (form.salePrice ? Number(form.salePrice) : null),
+      items: form.operationType === "DIRECT_RESALE" ? saleLineItems : undefined,
       shipDate: null, pickupDate: form.pickupDate || null,
       dueDate: form.pickupDate ? new Date(new Date(`${form.pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null,
       loadStatus: editingSale?.loadStatus || "OK", invoiceNumber: null,
@@ -952,22 +1033,22 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <section className="summary-grid">
           <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Vendido hoy</p><strong>{money.format(totals.todaySales)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthSales)}</b></span></article>
           <article className="metric-card accent-blue"><div className="metric-icon">□</div><p>Cajas vendidas hoy</p><strong>{number.format(totals.todayBoxes)}</strong><span>Acumulado del mes: <b>{number.format(totals.monthBoxes)}</b></span></article>
-          <article className="metric-card accent-gold"><div className="metric-icon">!</div><p>Por facturar</p><strong>{money.format(totals.uninvoiced)}</strong><span>{salesRows.filter((row) => !row.invoiceNumber).length} partidas sin factura</span></article>
+          <article className="metric-card accent-gold"><div className="metric-icon">!</div><p>Por facturar</p><strong>{money.format(totals.uninvoiced)}</strong><span>{salesRows.filter((row) => !row.invoiceNumber && !row.canceledAt).length} partidas sin factura</span></article>
           <article className="metric-card accent-earth"><div className="metric-icon">↗</div><p>Utilidad de hoy</p><strong>{money.format(totals.todayProfit)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthProfit)}</b></span></article>
         </section>
         <section className="sales-panel">
           <div className="panel-heading"><div><h2>Registro de ventas</h2><p>Partidas importadas de “VENTAS NORWEST DIC 2025 - 2026”</p></div><span className="record-count">{filtered.length} {filtered.length === 1 ? "partida" : "partidas"}</span></div>
           <div className="filters"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cliente, PO#, PU#, producto o factura" /></label>
-            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option>{LOAD_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}<option>SIN FACTURA</option></select>
+            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option>{LOAD_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}<option>SIN FACTURA</option><option>CANCELADAS</option></select>
             <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
           </div>
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Editar</th></tr></thead>
-            <tbody>{filtered.map((row, index) => { return <tr className={`${pickupTiming(row.pickupDate)} ${row.loadStatus === "PAS" ? "pas-attention-row" : ""}`.trim()} key={row.id ?? `${row.sourceRow}-${index}`}>
+            <tbody>{filtered.map((row, index) => { return <tr className={`${pickupTiming(row.pickupDate)} ${row.loadStatus === "PAS" ? "pas-attention-row" : ""} ${row.canceledAt ? "canceled-sale-row" : ""}`.trim()} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
-              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
+              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
-              <td><div className="sale-status-cell"><select className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div></td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td><td>{row.invoiceNumber ? <span className="muted">—</span> : <button type="button" className="edit-button" onClick={() => openEditSale(row)}>Editar</button>}</td>
+              <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <button type="button" className="edit-button" onClick={() => openEditSale(row)}>Editar</button> : <span className="muted">—</span>}{!row.canceledAt && <button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Eliminar</button>}</div></td>
             </tr>; })}</tbody></table></div>
         </section>
       </section>}
@@ -1092,16 +1173,26 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
           {form.operationType === "DIRECT_RESALE" ? <>
             <section className="form-section purchase-section"><div className="form-section-heading"><span>1</span><div><h3>Información de la compra</h3><p>Datos del proveedor y del producto adquirido.</p></div></div>
-              <div className="form-grid"><label>Proveedor / a quién se compró<select required value={form.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "saleSupplier") : setForm({...form, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>PU# de compra<input required value={form.pickupNumber} onChange={(e) => setForm({...form, pickupNumber:e.target.value})} placeholder="Número de pickup" /></label><label>Producto<select required value={products.find((item) => item.name === form.product && (item.presentation || "") === form.presentation && (item.size || "") === form.size)?.id || ""} onChange={(e) => chooseProduct(e.target.value, "sale")}><option value="">Selecciona un producto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label><label>Presentación<input value={form.presentation} readOnly /></label><label>Tamaño<input value={form.size} readOnly /></label><label>Etiqueta<input value={form.label} readOnly /></label><label>Precio de compra<input required min="0" step="0.01" type="number" value={form.purchasePrice} onChange={(e) => setForm({...form, purchasePrice:e.target.value})} /></label></div>
+              <div className="form-grid purchase-header-fields"><label>Proveedor / a quién se compró<select required value={form.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "saleSupplier") : setForm({...form, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>PU# de compra<input required value={form.pickupNumber} onChange={(e) => setForm({...form, pickupNumber:e.target.value})} placeholder="Número de pickup" /></label></div>
+              <div className="sale-lines-heading"><div><strong>Productos de la venta</strong><small>Puedes agregar el mismo producto con distintas presentaciones, tamaños o etiquetas.</small></div><button type="button" className="add-expense-button" onClick={() => addSaleLineItem()}>＋ Agregar producto</button></div>
+              <div className="sale-lines">{saleLineItems.map((item, index) => { const catalogProduct = products.find((product) => product.name === item.product && (product.presentation || "") === item.presentation && (product.size || "") === item.size && (product.label || "") === item.label); return <article key={`${index}-${item.product}-${item.presentation}-${item.size}-${item.label}`}>
+                <label className="sale-line-product"><span>Producto</span><select required value={catalogProduct?.id || ""} onChange={(event) => changeSaleLineProduct(index, event.target.value)}><option value="">Selecciona producto y variante</option>{products.map((product) => <option key={product.id} value={product.id}>{[product.name, product.presentation, product.size, product.label].filter(Boolean).join(" · ")}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación, tamaño o etiqueta"}</small></label>
+                <label><span>Bultos / cajas</span><input required min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateSaleLineItem(index, { quantity: Number(event.target.value) })} /></label>
+                <label><span>Precio compra</span><input required min="0" step="0.01" type="number" value={item.purchasePrice ?? 0} onChange={(event) => updateSaleLineItem(index, { purchasePrice: Number(event.target.value) })} /></label>
+                <label><span>Precio venta</span><input required min="0" step="0.01" type="number" value={item.unitPrice} onChange={(event) => updateSaleLineItem(index, { unitPrice: Number(event.target.value) })} /></label>
+                <div className="sale-line-total"><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div>
+                <button type="button" className="sale-line-remove" aria-label={`Eliminar ${item.product}`} onClick={() => setSaleLineItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
+              </article>; })}</div>
+              {!saleLineItems.length && <div className="sale-lines-empty">Agrega el primer producto para continuar.</div>}
             </section>
           </> : <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Selecciona del inventario</h3><p>Solo aparecen partidas con cajas disponibles.</p></div></div>
             {inventoryLoading ? <div className="inventory-empty">Consultando inventario…</div> : inventory.length === 0 ? <div className="inventory-empty"><strong>No hay inventario importado disponible</strong><span>Cuando se registren entradas de importación, aparecerán aquí para poder venderlas.</span></div> : <div className="inventory-list">{inventory.filter((lot) => lot.availableBoxes > 0 || lot.id === editingSale?.inventoryLotId).map((lot) => { const available = lot.availableBoxes + (editingSale?.inventoryLotId === lot.id ? editingSale.boxes : 0); return <button key={lot.id} type="button" className={`inventory-row ${form.inventoryLotId === String(lot.id) ? "selected" : ""}`} onClick={() => selectInventoryLot(lot)}><span className="inventory-radio"/><span><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "Sin detalle"}</small></span><span><strong>{lot.warehouse}</strong><small>Recibido {formatDate(lot.receivedDate)}</small></span><span className="inventory-boxes"><strong>{number.format(available)}</strong><small>cajas disponibles</small></span></button>; })}</div>}
           </section>}
 
           {(form.operationType === "DIRECT_RESALE" || selectedLot) && <section className="form-section sale-section"><div className="form-section-heading"><span>2</span><div><h3>Información de la venta</h3><p>Datos del cliente, entrega y precio de venta.</p></div></div>
-            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega / destino<input required value={form.warehouse} onChange={(e) => setForm({...form, warehouse:e.target.value})} placeholder="Ej. PROFRESH" /></label><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta<input required min="0" step="0.01" type="number" value={form.salePrice} onChange={(e) => setForm({...form, salePrice:e.target.value})} /></label><label>Día de pickup<input type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /></label></div>
+            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega / destino<input required value={form.warehouse} onChange={(e) => setForm({...form, warehouse:e.target.value})} placeholder="Ej. PROFRESH" /></label>{form.operationType === "IMPORTED_INVENTORY" && <><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta<input required min="0" step="0.01" type="number" value={form.salePrice} onChange={(e) => setForm({...form, salePrice:e.target.value})} /></label></>}<label>Día de pickup<input type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /></label></div>
           </section>}
-          <div className="form-total"><span>Total calculado</span><strong>{form.boxes && form.salePrice ? money.format(Number(form.boxes) * Number(form.salePrice)) : "$0.00"}</strong></div>
+          <div className="form-total"><span>Total calculado</span><strong>{form.operationType === "DIRECT_RESALE" ? money.format(saleLineItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)) : form.boxes && form.salePrice ? money.format(Number(form.boxes) * Number(form.salePrice)) : "$0.00"}</strong></div>
           {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !selectedLot}>{editingSale ? "Guardar cambios" : "Guardar venta"}</button></div>
         </form>}
       </div>}
@@ -1152,11 +1243,21 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
       {productDetailSale && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal product-detail-modal">
         <div className="modal-heading"><div><p className="eyebrow">Detalle de la carga</p><h2>Productos · Pickup #{productDetailSale.pickupNumber}</h2><p className="modal-intro">{productDetailSale.customer}</p></div></div>
-        <div className="product-detail-list">{productDetailItems.map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><div className="product-detail-edit"><label><span>Bultos / cajas</span><input min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateProductDetailItem(index, { quantity: Number(event.target.value) })} /></label><label><span>Precio</span><input min="0" step="0.01" type="number" value={item.unitPrice} onChange={(event) => updateProductDetailItem(index, { unitPrice: Number(event.target.value) })} /></label><div><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div></div></article>)}</div>
+        {productDetailSale.canceledAt && <div className="canceled-record-notice"><strong>Venta cancelada</strong><span>{productDetailSale.canceledBy} · {productDetailSale.cancellationReason}</span></div>}
+        <div className="product-detail-list">{productDetailItems.map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><div className="product-detail-edit"><label><span>Bultos / cajas</span><input disabled={Boolean(productDetailSale.canceledAt)} min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateProductDetailItem(index, { quantity: Number(event.target.value) })} /></label><label><span>Precio</span><input disabled={Boolean(productDetailSale.canceledAt)} min="0" step="0.01" type="number" value={item.unitPrice} onChange={(event) => updateProductDetailItem(index, { unitPrice: Number(event.target.value) })} /></label><div><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div></div></article>)}</div>
         <div className="product-detail-summary"><span>Total de bultos/cajas: <strong>{number.format(productDetailItems.reduce((sum, item) => sum + item.quantity, 0))}</strong></span><span>Total de la carga: <strong>{money.format(productDetailItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span></div>
         {productDetailSaveState && <p className="form-message">{productDetailSaveState}</p>}
-        <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeProductDetail}>Cancelar</button><button type="button" className="primary-button" onClick={() => void saveProductDetail()}>Guardar cambios</button></div>
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeProductDetail}>{productDetailSale.canceledAt ? "Cerrar" : "Cancelar"}</button>{!productDetailSale.canceledAt && <button type="button" className="primary-button" onClick={() => void saveProductDetail()}>Guardar cambios</button>}</div>
       </section></div>}
+
+      {cancelSale && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal cancellation-modal" onSubmit={confirmCancelSale}>
+        <div className="modal-heading"><div><p className="eyebrow">Conservar historial</p><h2>Eliminar / cancelar venta</h2><p className="modal-intro">La venta y su Sales Order no desaparecerán. Quedarán marcados como cancelados con el motivo registrado.</p></div></div>
+        <section className="form-section"><div className="cancellation-sale-summary"><strong>{cancelSale.customer}</strong><span>Pickup #{cancelSale.pickupNumber}</span><span>{number.format(cancelSale.boxes)} bultos/cajas</span></div><div className="form-grid">
+          <label>¿Quién canceló? *<select required value={cancelParty} onChange={(event) => { const party = event.target.value as "CLIENTE CANCELÓ" | "NW CANCELÓ"; setCancelParty(party); setCancelReason(party === "CLIENTE CANCELÓ" ? "Sin Razón" : "Producto no disponible"); }}><option>CLIENTE CANCELÓ</option><option>NW CANCELÓ</option></select></label>
+          <label>Razón *<select required value={cancelReason} onChange={(event) => setCancelReason(event.target.value)}>{(cancelParty === "CLIENTE CANCELÓ" ? customerCancellationReasons : nwCancellationReasons).map((reason) => <option key={reason} value={reason}>{reason}</option>)}</select></label>
+        </div></section>
+        {cancelSaveState && <p className="form-message">{cancelSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setCancelSale(null)}>Regresar</button><button type="submit" className="danger-button">Confirmar cancelación</button></div>
+      </form></div>}
 
       {adjustmentSale && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal sale-modal-wide adjustment-modal" onSubmit={saveInvoiceAdjustment}>
         <div className="modal-heading"><div><p className="eyebrow">Ajuste posterior a facturación</p><h2>Factura {adjustmentSale.invoiceNumber}</h2><p className="modal-intro">La factura original permanecerá intacta. El sistema generará una nota ligada a ella por la diferencia.</p></div></div>
@@ -1169,7 +1270,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
       {invoicePreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
         <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Factura {invoicePreview.invoiceNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => openInvoiceAdjustment(invoicePreview)}>Crear ajuste</button><button type="button" className="secondary-button" onClick={() => setInvoicePreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
-        {adjustmentsFor(invoicePreview).length > 0 && <div className="invoice-adjustment-history"><strong>Ajustes registrados</strong>{adjustmentsFor(invoicePreview).map((adjustment) => <span key={adjustment.number}><b>{adjustment.number}</b> · {adjustment.documentType} · {adjustment.reason} · {money.format(adjustment.difference)}</span>)}</div>}
+        {invoicePreview.canceledAt && <div className="canceled-record-notice"><strong>Venta cancelada</strong><span>{invoicePreview.canceledBy} · {invoicePreview.cancellationReason}</span></div>}{adjustmentsFor(invoicePreview).length > 0 && <div className="invoice-adjustment-history"><strong>Ajustes registrados</strong>{adjustmentsFor(invoicePreview).map((adjustment) => <span key={adjustment.number}><b>{adjustment.number}</b> · {adjustment.documentType} · {adjustment.reason} · {money.format(adjustment.difference)}</span>)}</div>}
         <article className="print-document commercial-document invoice-document">
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block"><h3><span>INVOICE:</span><b>{invoicePreview.invoiceNumber}</b></h3><dl><dt>ISSUED:</dt><dd>{formatDocumentDate(invoicePreview.saleDate)}</dd><dt>P.O. #:</dt><dd>{invoicePreview.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{invoicePreview.pickupNumber}</dd><dt>PICKUP DATE:</dt><dd>{formatDocumentDate(invoicePreview.pickupDate)}</dd><dt>CREDIT TERMS:</dt><dd>21 Days</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(invoicePreview.dueDate)}</dd></dl></div></div>
           <div className="document-parties two-columns"><section><h4>BILL TO:</h4><strong>{invoicePreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{invoicePreview.warehouse}</strong>{documentWarehouse ? <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></> : <span>Pickup destination</span>}</section></div>
@@ -1183,7 +1284,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
       {socPreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
         <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Sales Order Confirmation {socPreview.pickupNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => setSocPreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
-        <article className="print-document commercial-document soc-document">
+        {socPreview.canceledAt && <div className="canceled-record-notice"><strong>Venta cancelada</strong><span>{socPreview.canceledBy} · {socPreview.cancellationReason}</span></div>}<article className="print-document commercial-document soc-document">
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block soc-title"><h3>SALES CONFIRMATION</h3><dl><dt>ORDER #:</dt><dd>{socPreview.pickupNumber}</dd><dt>DATE:</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></dl></div></div>
           <div className="document-parties three-columns"><section><h4>CUSTOMER:</h4><strong>{socPreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{socPreview.warehouse}</strong><span>{documentWarehouse?.address || "Destination address pending"}</span></section><section><h4>WAREHOUSE:</h4><strong>{documentWarehouse?.name || socPreview.warehouse}</strong>{documentWarehouse && <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></>}</section></div>
           <dl className="soc-order-meta"><div><dt>P.O. Date</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></div><div><dt>P.O. #</dt><dd>{socPreview.purchaseOrder || "N/A"}</dd></div><div><dt>P.U. #</dt><dd>{socPreview.pickupNumber}</dd></div><div><dt>Buyer</dt><dd>{documentCustomer?.contactName || "Pending"}</dd></div><div><dt>Ship Terms</dt><dd>{socPreview.warehouse}</dd></div><div><dt>Payment Terms</dt><dd>21 Days</dd></div></dl>

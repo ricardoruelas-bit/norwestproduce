@@ -111,6 +111,10 @@ export const sales = sqliteTable(
     bolFileName: text("bol_file_name"),
     bolContentType: text("bol_content_type"),
     bolUploadedAt: text("bol_uploaded_at"),
+    canceledAt: text("canceled_at"),
+    canceledBy: text("canceled_by"),
+    cancellationReason: text("cancellation_reason"),
+    cancellationDetail: text("cancellation_detail"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [

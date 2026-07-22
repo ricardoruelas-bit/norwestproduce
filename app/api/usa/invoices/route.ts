@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     const db = getDb();
     const [existing] = await db.select().from(sales).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).limit(1);
     if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+    if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede facturarse." }, { status: 409 });
     if (existing.invoiceNumber) return Response.json({ error: "Esta venta ya fue facturada." }, { status: 409 });
 
     const invoiceRows = await db.select({ invoiceNumber: sales.invoiceNumber }).from(sales)
@@ -48,13 +49,17 @@ export async function POST(request: Request) {
     uploadedKey = `usa/bol/${saleId}/${crypto.randomUUID()}.${extension}`;
     await getBucket().put(uploadedKey, bol.stream(), { httpMetadata: { contentType: bol.type }, customMetadata: { saleId: String(saleId), originalName: bol.name } });
 
+    let saleItems: InvoiceItem[] = [];
+    try { saleItems = JSON.parse(existing.invoiceItems || "[]") as InvoiceItem[]; } catch { saleItems = []; }
     const normalized = items.map((item) => ({
       product: item.product.trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "",
       quantity: Number(item.quantity), unitPrice: Number(item.unitPrice),
+      purchasePrice: saleItems.find((source) => source.product === item.product && (source.presentation || "") === (item.presentation || "") && (source.size || "") === (item.size || "") && (source.label || "") === (item.label || ""))?.purchasePrice,
     }));
     const totalBoxes = normalized.reduce((sum, item) => sum + item.quantity, 0);
     const total = normalized.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-    const profit = existing.purchasePrice == null ? null : total - existing.purchasePrice * totalBoxes;
+    const itemCostsKnown = normalized.every((item) => Number.isFinite(Number(item.purchasePrice)));
+    const profit = itemCostsKnown ? total - normalized.reduce((sum, item) => sum + Number(item.purchasePrice) * item.quantity, 0) : existing.purchasePrice == null ? null : total - existing.purchasePrice * totalBoxes;
     const [updated] = await db.update(sales).set({
       invoiceNumber,
       invoiceItems: JSON.stringify(normalized),

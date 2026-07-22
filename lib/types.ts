@@ -41,6 +41,10 @@ export type Sale = {
   bolFileName?: string | null;
   bolContentType?: string | null;
   bolUploadedAt?: string | null;
+  canceledAt?: string | null;
+  canceledBy?: "CLIENTE CANCELÓ" | "NW CANCELÓ" | null;
+  cancellationReason?: string | null;
+  cancellationDetail?: string | null;
 };
 
 export type InvoiceAdjustment = {
@@ -63,6 +67,7 @@ export type InvoiceItem = {
   label: string;
   quantity: number;
   unitPrice: number;
+  purchasePrice?: number;
 };
 
 export type NewSale = Omit<Sale, "id" | "sourceRow" | "organizationCode" | "profit" | "total">;
