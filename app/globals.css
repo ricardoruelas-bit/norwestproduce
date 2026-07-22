@@ -159,6 +159,12 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .partner-grid { grid-template-columns:repeat(3,1fr); }.partner-grid .span-2{grid-column:span 2}.partner-grid select:disabled{cursor:not-allowed;background:#f1f4f3;color:#9aa7a3}
 .modal-backdrop-elevated { z-index:35; background:rgba(15,38,34,.62); }
 .form-grid input[readonly] { background:#f1f5f4; color:#62736f; }
+.password-input { position:relative; }
+.password-input input { width:100%; padding-right:44px; }
+.password-input button { position:absolute; top:50%; right:7px; display:grid; width:32px; height:32px; padding:0; transform:translateY(-50%); place-items:center; border:0; border-radius:8px; background:transparent; filter:grayscale(1); opacity:.58; font-size:17px; line-height:1; cursor:pointer; }
+.password-input button:hover,.password-input button:focus-visible { background:#e8f2ef; color:var(--green-dark); outline:0; }
+.password-input button.is-visible { background:#e8f2ef; opacity:1; }
+.password-change-help { margin:13px 0 0; color:var(--muted); font-size:9px; font-weight:650; }
 .invoice-number-button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:0; border:0; background:transparent; color:var(--green-dark); cursor:pointer; }
 .invoice-number-button small { margin:0; color:var(--green-dark); font-size:8px; font-weight:800; text-decoration:underline; }
 .pickup-number-button { padding:3px 0; border:0; border-bottom:1px solid currentColor; background:transparent; color:var(--green-dark); font-size:11px; font-weight:800; cursor:pointer; }

@@ -113,7 +113,7 @@ const blankInventory = {
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "" };
 const blankColdStorage = { name: "", address: "", phone: "" };
 const blankCompany = { legalName: "NORWEST PRODUCE LLC", street: "710 LAUREL AVENUE", city: "MCALLEN", state: "TX", postalCode: "78501", blueBookNumber: "", pacaNumber: "", dunsNumber: "", taxId: "", norwestProfitPercentage: "16" };
-const blankUser = { fullName: "", alias: "", email: "", password: "", active: true, permissions: ["sales_view"] as string[] };
+const blankUser = { fullName: "", alias: "", email: "", password: "", currentPassword: "", newPassword: "", confirmNewPassword: "", active: true, permissions: ["sales_view"] as string[] };
 const PERMISSION_OPTIONS = [
   ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
 ] as const;
@@ -192,6 +192,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [userForm, setUserForm] = useState(blankUser);
   const [userSaveState, setUserSaveState] = useState("");
+  const [visibleUserPasswords, setVisibleUserPasswords] = useState({ password: false, current: false, next: false, confirm: false });
   const [statusModalSale, setStatusModalSale] = useState<Sale | null>(null);
   const [statusModalType, setStatusModalType] = useState<"PAS" | "USDA REQUESTED" | null>(null);
   const [pasDays, setPasDays] = useState("");
@@ -309,13 +310,18 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   function openUserForm(user?: UserAccount) {
     setEditingUserId(user?.id ?? null);
-    setUserForm(user ? { fullName: user.fullName, alias: user.alias, email: user.email, password: "", active: user.active, permissions: (() => { try { return JSON.parse(user.permissions) as string[]; } catch { return []; } })() } : blankUser);
+    setUserForm(user ? { fullName: user.fullName, alias: user.alias, email: user.email, password: "", currentPassword: "", newPassword: "", confirmNewPassword: "", active: user.active, permissions: (() => { try { return JSON.parse(user.permissions) as string[]; } catch { return []; } })() } : blankUser);
+    setVisibleUserPasswords({ password: false, current: false, next: false, confirm: false });
     setUserSaveState("");
     setUserModal(true);
   }
 
   async function saveUser(event: FormEvent) {
     event.preventDefault();
+    if (editingUserId && userForm.newPassword !== userForm.confirmNewPassword) {
+      setUserSaveState("La nueva contraseña y su confirmación no coinciden.");
+      return;
+    }
     setUserSaveState("Guardando…");
     try {
       const response = await fetch("/api/usa/users", { method: editingUserId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, id: editingUserId }) });
@@ -1331,7 +1337,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
       {userModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal user-modal" onSubmit={saveUser}>
         <div className="modal-heading"><div><p className="eyebrow">Configuración USA</p><h2>{editingUserId ? "Editar usuario" : "Agregar usuario"}</h2><p className="modal-intro">Define sus datos y lo que podrá consultar o modificar.</p></div></div>
-        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label><label>{editingUserId ? "Nueva contraseña" : "Contraseña *"}<input required={!editingUserId} minLength={8} type="password" autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder={editingUserId ? "Dejar vacío para conservarla" : "Mínimo 8 caracteres"} /></label><label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div></section>
+        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label>{editingUserId ? <><label>Contraseña actual<div className="password-input"><input minLength={8} type={visibleUserPasswords.current ? "text" : "password"} autoComplete="current-password" value={userForm.currentPassword} onChange={(e) => setUserForm({...userForm, currentPassword:e.target.value})} placeholder="Necesaria para cambiarla" /><button type="button" className={visibleUserPasswords.current ? "is-visible" : ""} aria-label={visibleUserPasswords.current ? "Ocultar contraseña actual" : "Mostrar contraseña actual"} aria-pressed={visibleUserPasswords.current} onClick={() => setVisibleUserPasswords((current) => ({...current, current:!current.current}))}>👁</button></div></label><label>Nueva contraseña<div className="password-input"><input minLength={8} type={visibleUserPasswords.next ? "text" : "password"} autoComplete="new-password" value={userForm.newPassword} onChange={(e) => setUserForm({...userForm, newPassword:e.target.value})} placeholder="Mínimo 8 caracteres" /><button type="button" className={visibleUserPasswords.next ? "is-visible" : ""} aria-label={visibleUserPasswords.next ? "Ocultar nueva contraseña" : "Mostrar nueva contraseña"} aria-pressed={visibleUserPasswords.next} onClick={() => setVisibleUserPasswords((current) => ({...current, next:!current.next}))}>👁</button></div></label><label>Confirmar nueva contraseña<div className="password-input"><input minLength={8} type={visibleUserPasswords.confirm ? "text" : "password"} autoComplete="new-password" value={userForm.confirmNewPassword} onChange={(e) => setUserForm({...userForm, confirmNewPassword:e.target.value})} placeholder="Repite la nueva contraseña" /><button type="button" className={visibleUserPasswords.confirm ? "is-visible" : ""} aria-label={visibleUserPasswords.confirm ? "Ocultar confirmación" : "Mostrar confirmación"} aria-pressed={visibleUserPasswords.confirm} onClick={() => setVisibleUserPasswords((current) => ({...current, confirm:!current.confirm}))}>👁</button></div></label></> : <label>Contraseña *<div className="password-input"><input required minLength={8} type={visibleUserPasswords.password ? "text" : "password"} autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder="Mínimo 8 caracteres" /><button type="button" className={visibleUserPasswords.password ? "is-visible" : ""} aria-label={visibleUserPasswords.password ? "Ocultar contraseña" : "Mostrar contraseña"} aria-pressed={visibleUserPasswords.password} onClick={() => setVisibleUserPasswords((current) => ({...current, password:!current.password}))}>👁</button></div></label>}<label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div>{editingUserId && <p className="password-change-help">Para conservar la contraseña actual, deja vacíos los tres campos de contraseña.</p>}</section>
         <section className="form-section"><div className="form-section-heading"><span>✓</span><div><h3>Permisos del usuario</h3><p>Autoriza individualmente cada área.</p></div></div><div className="permissions-grid">{PERMISSION_OPTIONS.map(([key, label]) => <label key={key}><input type="checkbox" checked={userForm.permissions.includes(key)} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...userForm.permissions, key] : userForm.permissions.filter((item) => item !== key)})} /><span>{label}</span></label>)}</div></section>
         {userSaveState && <p className="form-message">{userSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(false)}>Cancelar</button><button type="submit" className="primary-button">{editingUserId ? "Guardar cambios" : "Crear usuario"}</button></div>
       </form></div>}
