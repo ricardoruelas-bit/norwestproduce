@@ -15,8 +15,8 @@ a { color:inherit; text-decoration:none; }
 .brand-lockup { display:inline-flex; align-items:center; gap:13px; margin-bottom:45px; text-align:left; }
 .brand-lockup strong { display:block; font-family:Georgia,serif; font-size:27px; letter-spacing:.07em; line-height:.85; }
 .brand-lockup small { display:block; margin-top:7px; color:var(--green); font-size:11px; font-weight:800; letter-spacing:.31em; }
-.gateway-brand-lockup { width:min(390px,78vw); margin-bottom:38px; }
-.gateway-brand-lockup img { display:block; width:100%; height:auto; mix-blend-mode:multiply; }
+.gateway-brand-lockup { width:min(470px,86vw); margin-bottom:34px; padding:14px 18px; border:1px solid rgba(25,48,45,.08); border-radius:18px; background:#fff; box-shadow:0 12px 35px rgba(27,64,57,.08); }
+.gateway-brand-lockup img { display:block; width:100%; height:auto; }
 .brand-mark { position:relative; width:48px; height:48px; overflow:hidden; border-radius:13px; background:linear-gradient(#9bd8eb 0 42%,#f5b51b 43% 55%,#007f71 56%); }
 .brand-mark span { position:absolute; bottom:-9px; width:38px; height:27px; border-radius:50% 50% 0 0; transform:rotate(-25deg); }
 .brand-mark span:nth-child(1){left:-10px;background:#007f71}.brand-mark span:nth-child(2){left:12px;background:#9a6b38}.brand-mark span:nth-child(3){right:-26px;background:#f5b51b}
@@ -101,6 +101,7 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .sales-table tbody tr.pickup-past>td { background:#ffe0bd; }
 .sales-table tbody tr.pickup-today:hover>td { background:#ffef9d; }
 .sales-table tbody tr.pickup-past:hover>td { background:#ffd39f; }
+.sales-table tbody tr.invoice-complete-row>td,.sales-table tbody tr.invoice-complete-row:hover>td { background:#ddf3e6; }
 .sales-table tbody tr.pas-attention-row>td,.sales-table tbody tr.pas-attention-row:hover>td { background:#fde2e0; color:#b42318; }
 .sales-table tbody tr.pas-attention-row td *:not(option) { color:#b42318; }
 .sales-table tbody tr.pas-attention-row .operation-tag,.sales-table tbody tr.pas-attention-row .invoice-chip { border:1px solid #e79b95; background:#fff0ef; color:#b42318; }

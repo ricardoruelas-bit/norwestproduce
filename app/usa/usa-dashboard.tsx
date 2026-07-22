@@ -920,12 +920,21 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setSaveState("");
   }
 
-  function pickupTiming(value: string | null) {
-    if (!value) return "";
+  function pickupTiming(value: string | null, saleDate?: string | null) {
+    if (!value || value === saleDate) return "";
     const today = localDateKey();
     if (value === today) return "pickup-today";
     if (value < today) return "pickup-past";
     return "";
+  }
+
+  function saleRowClass(row: Sale) {
+    const classes = [pickupTiming(row.pickupDate, row.saleDate)];
+    const hasOperationalPending = row.loadStatus === "PAS" || row.loadStatus === "USDA REQUESTED";
+    if (row.invoiceNumber && !hasOperationalPending && !row.canceledAt) classes.push("invoice-complete-row");
+    if (row.loadStatus === "PAS") classes.push("pas-attention-row");
+    if (row.canceledAt) classes.push("canceled-sale-row");
+    return classes.filter(Boolean).join(" ");
   }
 
   function selectInventoryLot(lot: InventoryLot) {
@@ -1096,9 +1105,9 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
             <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
           </div>
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Editar</th></tr></thead>
-            <tbody>{filtered.map((row, index) => { return <tr className={`${pickupTiming(row.pickupDate)} ${row.loadStatus === "PAS" ? "pas-attention-row" : ""} ${row.canceledAt ? "canceled-sale-row" : ""}`.trim()} key={row.id ?? `${row.sourceRow}-${index}`}>
+            <tbody>{filtered.map((row, index) => { return <tr className={saleRowClass(row)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
-              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
+              <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate, row.saleDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate, row.saleDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.invoiceNumber ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>{money.format(invoiceItemsFor(row)[0]?.unitPrice ?? row.salePrice ?? 0)}</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
               <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select disabled={Boolean(row.invoiceNumber)} title={row.invoiceNumber ? "El estatus queda bloqueado al facturar" : undefined} className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" disabled={Boolean(row.invoiceNumber)} className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <><button type="button" className="edit-button" onClick={() => openEditSale(row)}>Editar</button><button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Eliminar</button></> : <span className="muted">—</span>}</div></td>
