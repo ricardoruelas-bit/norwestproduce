@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { inventoryLots, sales } from "../../../../db/schema";
 import referenceSales from "../../../../lib/reference-sales.json";
@@ -131,6 +131,83 @@ export async function PATCH(request: Request) {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id);
     if (!Number.isInteger(id) || id <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
+    if (payload.editSale === true) {
+      const db = getDb();
+      const [existing] = await db.select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
+      if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+      if (existing.invoiceNumber) return Response.json({ error: "Una venta facturada ya no puede editarse." }, { status: 409 });
+
+      const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
+      const saleDate = text(payload.saleDate);
+      const customer = text(payload.customer);
+      const warehouse = text(payload.warehouse);
+      const pickupNumber = text(payload.pickupNumber);
+      const product = text(payload.product);
+      if (!saleDate || !customer || !warehouse || !pickupNumber || !product) {
+        return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
+      }
+      const boxes = Number(payload.boxes);
+      const salePrice = Number(payload.salePrice);
+      if (!Number.isInteger(boxes) || boxes <= 0) return Response.json({ error: "La cantidad de cajas debe ser un entero mayor que cero." }, { status: 400 });
+      if (!Number.isFinite(salePrice) || salePrice < 0) return Response.json({ error: "Ingresa un precio de venta válido." }, { status: 400 });
+
+      const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
+      if (operationType !== existing.operationType) return Response.json({ error: "El tipo de operación de una venta existente no puede cambiarse." }, { status: 400 });
+
+      let inventoryLotId: number | null = null;
+      let purchasePrice = payload.purchasePrice == null || payload.purchasePrice === "" ? null : Number(payload.purchasePrice);
+      if (operationType === "DIRECT_RESALE" && (purchasePrice == null || !Number.isFinite(purchasePrice) || purchasePrice < 0)) {
+        return Response.json({ error: "Ingresa un precio de compra válido." }, { status: 400 });
+      }
+      if (operationType === "IMPORTED_INVENTORY") {
+        inventoryLotId = Number(payload.inventoryLotId);
+        if (!Number.isInteger(inventoryLotId) || inventoryLotId <= 0) return Response.json({ error: "Selecciona una partida disponible del inventario." }, { status: 400 });
+        const [lot] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"))).limit(1);
+        if (!lot) return Response.json({ error: "No se encontró la partida de inventario seleccionada." }, { status: 404 });
+        const usableBoxes = lot.availableBoxes + (existing.inventoryLotId === inventoryLotId ? existing.boxes : 0);
+        if (usableBoxes < boxes) return Response.json({ error: `La partida sólo tiene ${usableBoxes} cajas disponibles para esta venta.` }, { status: 409 });
+        purchasePrice = lot.unitCost;
+
+        if (existing.inventoryLotId === inventoryLotId) {
+          await db.update(inventoryLots).set({ availableBoxes: usableBoxes - boxes }).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+        } else {
+          await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${boxes}` }).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, boxes)));
+          if (existing.inventoryLotId) {
+            await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${existing.boxes}` }).where(and(eq(inventoryLots.id, existing.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+          }
+        }
+      }
+
+      const total = boxes * salePrice;
+      const profit = purchasePrice == null ? null : (salePrice - purchasePrice) * boxes;
+      const pickupDate = text(payload.pickupDate) || null;
+      const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
+      const [sale] = await db.update(sales).set({
+        supplier: text(payload.supplier) || null,
+        inventoryLotId,
+        saleDate,
+        customer,
+        sellerName: text(payload.sellerName) || null,
+        purchaseOrder: text(payload.purchaseOrder) || null,
+        warehouse,
+        pickupNumber,
+        boxes,
+        product,
+        presentation: text(payload.presentation) || null,
+        size: text(payload.size) || null,
+        label: text(payload.label) || null,
+        purchasePrice,
+        salePrice,
+        profit,
+        shipDate: null,
+        pickupDate,
+        total,
+        dueDate,
+        invoiceItems: null,
+      }).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.invoiceNumber))).returning();
+      if (!sale) return Response.json({ error: "La venta fue facturada mientras se editaba y ya no puede modificarse." }, { status: 409 });
+      return Response.json({ sale });
+    }
     if (Array.isArray(payload.items)) {
       const items = payload.items as InvoiceItem[];
       const validItems = items.length > 1 && items.length <= 25 && items.every((item) => typeof item.product === "string" && item.product.trim() && Number.isFinite(Number(item.quantity)) && Number(item.quantity) > 0 && Number.isFinite(Number(item.unitPrice)) && Number(item.unitPrice) >= 0);
