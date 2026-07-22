@@ -177,6 +177,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [expandedCatalogProducts, setExpandedCatalogProducts] = useState<string[]>([]);
   const [productModal, setProductModal] = useState(false);
   const [productForm, setProductForm] = useState(blankProduct);
+  const [productVariantBase, setProductVariantBase] = useState<{ name: string; alias: string } | null>(null);
   const [productSaveState, setProductSaveState] = useState("");
   const [partnerTarget, setPartnerTarget] = useState<PartnerTarget>(null);
   const [productTarget, setProductTarget] = useState<"sale" | "inventory" | "catalog" | null>(null);
@@ -851,7 +852,17 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function openProductForm(target: "sale" | "inventory" | "catalog", lineIndex: number | null = null, seed: Partial<typeof blankProduct> = {}) {
     setProductTarget(target);
     setProductTargetLine(lineIndex);
+    setProductVariantBase(null);
     setProductForm({ ...blankProduct, ...seed });
+    setProductSaveState("");
+    setProductModal(true);
+  }
+
+  function openProductVariantForm(product: { name: string; alias: string }) {
+    setProductTarget("catalog");
+    setProductTargetLine(null);
+    setProductVariantBase(product);
+    setProductForm({ ...blankProduct, name: product.name, alias: product.alias });
     setProductSaveState("");
     setProductModal(true);
   }
@@ -870,9 +881,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         else setForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" }));
       }
       if (productTarget === "inventory") setInventoryForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" }));
+      if (productVariantBase) setExpandedCatalogProducts((current) => current.includes(data.product.name.trim().toLocaleLowerCase()) ? current : [...current, data.product.name.trim().toLocaleLowerCase()]);
       setProductModal(false);
       setProductTarget(null);
       setProductTargetLine(null);
+      setProductVariantBase(null);
       setProductSaveState("");
     } catch (error) {
       setProductSaveState(error instanceof Error ? error.message : "No se pudo guardar el producto.");
@@ -1200,7 +1213,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         </section>
         {partnerTypeFilter === "PRODUCT" ? <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>Productos</h2><p>Productos, presentaciones, tamaños y etiquetas disponibles para ventas e inventario.</p></div><button className="primary-button" onClick={() => openProductForm("catalog")}>＋ Alta de producto</button></div>
-          <div className="table-wrap catalog-table products-catalog-table"><table><thead><tr><th>Producto</th><th>Alias</th><th>Variantes registradas</th></tr></thead>
+          <div className="table-wrap catalog-table products-catalog-table"><table><thead><tr><th>Producto</th><th>Alias</th><th>Variantes registradas</th><th></th></tr></thead>
             <tbody>{productCatalogGroups.map((group) => {
               const expanded = expandedCatalogProducts.includes(group.key);
               const detailsId = `product-variants-${group.variants[0].id}`;
@@ -1209,8 +1222,9 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
                   <td><button type="button" className="product-expand-button" aria-expanded={expanded} aria-controls={detailsId}><span className="product-expand-chevron">›</span><strong>{group.name}</strong></button></td>
                   <td><span className="product-alias-chip">{group.alias}</span></td>
                   <td><button type="button" className="product-variant-count">{group.variants.length} {group.variants.length === 1 ? "variante" : "variantes"}<small>{expanded ? "Ocultar detalle" : "Ver detalle"}</small></button></td>
+                  <td><button type="button" className="product-variant-add" onClick={(event) => { event.stopPropagation(); openProductVariantForm({ name: group.name, alias: group.alias }); }}>＋ Agregar variante</button></td>
                 </tr>
-                {expanded && <tr className="product-variants-row" id={detailsId}><td colSpan={3}><div className="product-variants-list">
+                {expanded && <tr className="product-variants-row" id={detailsId}><td colSpan={4}><div className="product-variants-list">
                   <div className="product-variant-head"><span>Presentación</span><span>Tamaño</span><span>Etiqueta</span></div>
                   {group.variants.map((variant) => <div className="product-variant-item" key={variant.id}><span>{variant.presentation || "—"}</span><span>{variant.size || "—"}</span><span>{variant.label || "—"}</span></div>)}
                 </div></td></tr>}
@@ -1381,9 +1395,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       </form></div>}
 
       {productModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveProduct}>
-        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar nuevo producto</h2><p className="modal-intro">{productTarget === "catalog" ? "El producto quedará disponible para ventas e inventario." : "Al guardarlo regresarás a la captura anterior con el producto seleccionado."}</p></div></div>
-        <section className="form-section"><div className="form-grid"><label>Producto *<input required value={productForm.name} onChange={(e) => setProductForm({...productForm, name:e.target.value})} /></label><label>Alias *<input required maxLength={3} pattern="[A-Za-z]{1,3}" title="De 1 a 3 letras" value={productForm.alias} onChange={(e) => setProductForm({...productForm, alias:e.target.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 3)})} placeholder="Máx. 3 letras" /></label><label>Presentación<input value={productForm.presentation} onChange={(e) => setProductForm({...productForm, presentation:e.target.value})} placeholder="Ej. caja 25 lb" /></label><label>Tamaño<input value={productForm.size} onChange={(e) => setProductForm({...productForm, size:e.target.value})} /></label><label>Etiqueta<input value={productForm.label} onChange={(e) => setProductForm({...productForm, label:e.target.value})} /></label></div></section>
-        {productSaveState && <p className="form-message">{productSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setProductModal(false); setProductTarget(null); setProductTargetLine(null); }}>Cancelar</button><button type="submit" className="primary-button">Registrar producto</button></div>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{productVariantBase ? "Agregar variante" : "Agregar nuevo producto"}</h2><p className="modal-intro">{productVariantBase ? "El producto se conserva; captura únicamente la nueva presentación, tamaño y etiqueta." : productTarget === "catalog" ? "El producto quedará disponible para ventas e inventario." : "Al guardarlo regresarás a la captura anterior con el producto seleccionado."}</p></div></div>
+        {productVariantBase && <div className="product-variant-context"><div><span>Producto</span><strong>{productVariantBase.name}</strong></div><div><span>Alias</span><strong className="product-alias-chip">{productVariantBase.alias}</strong></div></div>}
+        <section className="form-section"><div className="form-grid">{!productVariantBase && <><label>Producto *<input required value={productForm.name} onChange={(e) => setProductForm({...productForm, name:e.target.value})} /></label><label>Alias *<input required maxLength={3} pattern="[A-Za-z]{1,3}" title="De 1 a 3 letras" value={productForm.alias} onChange={(e) => setProductForm({...productForm, alias:e.target.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, 3)})} placeholder="Máx. 3 letras" /></label></>}<label>Presentación<input value={productForm.presentation} onChange={(e) => setProductForm({...productForm, presentation:e.target.value})} placeholder="Ej. caja 25 lb" /></label><label>Tamaño<input value={productForm.size} onChange={(e) => setProductForm({...productForm, size:e.target.value})} /></label><label>Etiqueta<input value={productForm.label} onChange={(e) => setProductForm({...productForm, label:e.target.value})} /></label></div></section>
+        {productSaveState && <p className="form-message">{productSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setProductModal(false); setProductTarget(null); setProductTargetLine(null); setProductVariantBase(null); }}>Cancelar</button><button type="submit" className="primary-button">{productVariantBase ? "Guardar variante" : "Registrar producto"}</button></div>
       </form></div>}
 
       {userModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal user-modal" onSubmit={saveUser}>
