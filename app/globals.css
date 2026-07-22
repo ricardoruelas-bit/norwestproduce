@@ -98,9 +98,8 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .row-actions{display:flex;align-items:center;gap:6px}.delete-button,.danger-button{padding:7px 10px;border:1px solid #d94b43;border-radius:8px;background:#fff4f3;color:#b42318;font-size:9px;font-weight:850;cursor:pointer;white-space:nowrap}.delete-button:hover,.danger-button:hover{background:#fee4e2}.danger-button{padding:11px 18px;font-size:11px}.canceled-sale-row>td,.canceled-sale-row:hover>td{background:#f5f5f3!important;color:#777!important}.canceled-sale-row .pickup-date-input{color:#777}.cancellation-status{display:flex;max-width:150px;flex-direction:column;gap:3px;color:#b42318}.cancellation-status strong{font-size:10px;text-transform:uppercase}.cancellation-status small{font-size:8px;line-height:1.3}.cancellation-modal{width:min(690px,100%)}.cancellation-sale-summary{display:flex;gap:16px;align-items:center;margin-bottom:18px;padding:13px 15px;border-radius:10px;background:#f5f8f7;color:var(--muted);font-size:10px}.cancellation-sale-summary strong{margin-right:auto;color:var(--ink);font-size:12px}
 .canceled-record-notice{display:flex;align-items:center;gap:12px;margin:0 0 12px;padding:11px 14px;border:1px solid #efb3ae;border-radius:10px;background:#fff2f1;color:#b42318}.canceled-record-notice strong{font-size:11px;text-transform:uppercase}.canceled-record-notice span{font-size:10px}
 .sales-table { min-width:1530px; }
-.sales-table tbody tr.pickup-current-row>td,.sales-table tbody tr.pickup-current-row:hover>td { background:#fff; }
-.sales-table tbody tr.pickup-past>td { background:#ffe0bd; }
-.sales-table tbody tr.pickup-past:hover>td { background:#ffd39f; }
+.sales-table tbody tr.pickup-current-row>td { background:#ffe0bd; }
+.sales-table tbody tr.pickup-current-row:hover>td { background:#ffd39f; }
 .sales-table tbody tr.invoice-complete-row>td,.sales-table tbody tr.invoice-complete-row:hover>td { background:#ddf3e6; }
 .sales-table tbody tr.pas-attention-row>td,.sales-table tbody tr.pas-attention-row:hover>td { background:#fde2e0; color:#b42318; }
 .sales-table tbody tr.pas-attention-row td *:not(option) { color:#b42318; }

@@ -953,23 +953,12 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setSaveState("");
   }
 
-  function pickupTiming(value: string | null, saleDate?: string | null) {
-    if (!value) return "";
-    const today = localDateKey();
-    if (value === today) return "pickup-current-row";
-    if (saleDate && value > saleDate) return "";
-    if (value === saleDate) return "";
-    if (value < today) return "pickup-past";
-    return "";
-  }
-
   function saleRowClass(row: Sale) {
-    const classes = [pickupTiming(row.pickupDate, row.saleDate)];
-    const hasOperationalPending = row.loadStatus === "PAS" || row.loadStatus === "USDA REQUESTED";
-    if (row.invoiceNumber && !hasOperationalPending && !row.canceledAt) classes.push("invoice-complete-row");
-    if (row.loadStatus === "PAS") classes.push("pas-attention-row");
-    if (row.canceledAt) classes.push("canceled-sale-row");
-    return classes.filter(Boolean).join(" ");
+    if (row.canceledAt) return "canceled-sale-row";
+    if (row.loadStatus === "PAS") return "pas-attention-row";
+    if (row.invoiceNumber) return "invoice-complete-row";
+    if (row.pickupDate === localDateKey()) return "pickup-current-row";
+    return "";
   }
 
   function selectInventoryLot(lot: InventoryLot) {
