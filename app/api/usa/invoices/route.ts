@@ -58,6 +58,8 @@ export async function POST(request: Request) {
     const [updated] = await db.update(sales).set({
       invoiceNumber,
       invoiceItems: JSON.stringify(normalized),
+      originalInvoiceItems: JSON.stringify(normalized),
+      invoiceAdjustments: "[]",
       bolObjectKey: uploadedKey,
       bolFileName: bol.name,
       bolContentType: bol.type,

@@ -214,6 +214,7 @@ export async function PATCH(request: Request) {
       if (!validItems) return Response.json({ error: "Revisa los productos, bultos/cajas y precios de la carga." }, { status: 400 });
       const [existing] = await getDb().select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
       if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+      if (existing.invoiceNumber) return Response.json({ error: "La factura ya fue emitida. Usa Crear ajuste para conservar el historial." }, { status: 409 });
       const normalized = items.map((item) => ({ product: item.product.trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "", quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) }));
       const boxes = normalized.reduce((sum, item) => sum + item.quantity, 0);
       const total = normalized.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);

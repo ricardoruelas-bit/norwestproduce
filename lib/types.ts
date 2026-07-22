@@ -35,10 +35,25 @@ export type Sale = {
   paymentStatus: string | null;
   invoiceNumber: string | null;
   invoiceItems?: string | null;
+  originalInvoiceItems?: string | null;
+  invoiceAdjustments?: string | null;
   bolObjectKey?: string | null;
   bolFileName?: string | null;
   bolContentType?: string | null;
   bolUploadedAt?: string | null;
+};
+
+export type InvoiceAdjustment = {
+  number: string;
+  createdAt: string;
+  reason: "CAMBIO DE PRECIO" | "RECHAZO PARCIAL" | "PRODUCTO ELIMINADO" | "CARGA POR ERROR" | "OTRO";
+  notes: string;
+  previousItems: InvoiceItem[];
+  adjustedItems: InvoiceItem[];
+  previousTotal: number;
+  adjustedTotal: number;
+  difference: number;
+  documentType: "NOTA DE CREDITO" | "NOTA DE DEBITO" | "SIN CAMBIO";
 };
 
 export type InvoiceItem = {

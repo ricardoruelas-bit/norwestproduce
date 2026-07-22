@@ -78,6 +78,13 @@
       "when": 1784680032841,
       "tag": "0010_known_siren",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1784680915538,
+      "tag": "0011_melted_thundra",
+      "breakpoints": true
     }
   ]
 }

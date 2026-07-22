@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
-import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceItem, PartnerType, Product, Sale, UserAccount } from "../../lib/types";
+import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceAdjustment, InvoiceItem, PartnerType, Product, Sale, UserAccount } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
@@ -73,6 +73,25 @@ function invoiceItemsFor(sale: Sale): InvoiceItem[] {
   return [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice || 0 }];
 }
 
+function originalInvoiceItemsFor(sale: Sale): InvoiceItem[] {
+  if (sale.originalInvoiceItems) {
+    try {
+      const parsed = JSON.parse(sale.originalInvoiceItems) as InvoiceItem[];
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch { /* Fall back to the current invoice items. */ }
+  }
+  return invoiceItemsFor(sale);
+}
+
+function adjustmentsFor(sale: Sale): InvoiceAdjustment[] {
+  try {
+    const parsed = JSON.parse(sale.invoiceAdjustments || "[]") as InvoiceAdjustment[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 const blankSale = {
   saleDate: localDateKey(), operationType: "DIRECT_RESALE" as Operation, supplier: "", inventoryLotId: "", customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
   boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", sellerName: "", shipDate: "", pickupDate: "",
@@ -136,6 +155,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
   const [invoiceSaveState, setInvoiceSaveState] = useState("");
   const [invoicePreview, setInvoicePreview] = useState<Sale | null>(null);
+  const [adjustmentSale, setAdjustmentSale] = useState<Sale | null>(null);
+  const [adjustmentItems, setAdjustmentItems] = useState<InvoiceItem[]>([]);
+  const [adjustmentReason, setAdjustmentReason] = useState<InvoiceAdjustment["reason"]>("CAMBIO DE PRECIO");
+  const [adjustmentNotes, setAdjustmentNotes] = useState("");
+  const [adjustmentSaveState, setAdjustmentSaveState] = useState("");
   const [socPreview, setSocPreview] = useState<Sale | null>(null);
   const [productDetailSale, setProductDetailSale] = useState<Sale | null>(null);
   const [productDetailItems, setProductDetailItems] = useState<InvoiceItem[]>([]);
@@ -670,6 +694,40 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     void Promise.all([loadPartners(), loadColdStorages(), loadSettings()]);
   }
 
+  function openInvoiceAdjustment(sale: Sale) {
+    setAdjustmentSale(sale);
+    setAdjustmentItems(invoiceItemsFor(sale));
+    setAdjustmentReason("CAMBIO DE PRECIO");
+    setAdjustmentNotes("");
+    setAdjustmentSaveState("");
+    void loadProducts();
+  }
+
+  function closeInvoiceAdjustment() {
+    setAdjustmentSale(null);
+    setAdjustmentItems([]);
+    setAdjustmentNotes("");
+    setAdjustmentSaveState("");
+  }
+
+  async function saveInvoiceAdjustment(event: FormEvent) {
+    event.preventDefault();
+    if (!adjustmentSale?.id) return;
+    if (!adjustmentNotes.trim()) return setAdjustmentSaveState("Describe brevemente la razón del ajuste.");
+    if (adjustmentItems.some((item) => !item.product.trim() || item.quantity <= 0 || item.unitPrice < 0)) return setAdjustmentSaveState("Revisa las partidas, cantidades y precios.");
+    setAdjustmentSaveState("Registrando ajuste…");
+    try {
+      const response = await fetch("/api/usa/invoice-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleId: adjustmentSale.id, reason: adjustmentReason, notes: adjustmentNotes, items: adjustmentItems }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo registrar el ajuste.");
+      replaceSale(data.sale);
+      setInvoicePreview(data.sale);
+      closeInvoiceAdjustment();
+    } catch (error) {
+      setAdjustmentSaveState(error instanceof Error ? error.message : "No se pudo registrar el ajuste.");
+    }
+  }
+
   function openSocPreview(sale: Sale) {
     setInvoicePreview(null);
     setSocPreview(sale);
@@ -789,7 +847,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const selectedLotAvailable = selectedLot ? selectedLot.availableBoxes + (editingSale?.inventoryLotId === selectedLot.id ? editingSale.boxes : 0) : undefined;
   const selectedColdStorage = coldStorages.find((item) => item.name === inventoryForm.coldStorage);
   const documentSale = invoicePreview || socPreview;
-  const documentItems = documentSale ? invoiceItemsFor(documentSale) : [];
+  const documentItems = documentSale ? (invoicePreview ? originalInvoiceItemsFor(documentSale) : invoiceItemsFor(documentSale)) : [];
   const documentTotal = documentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const documentCustomer = partners.find((item) => item.partnerType === "CUSTOMER" && item.name === documentSale?.customer);
   const documentWarehouse = coldStorages.find((item) => item.name === documentSale?.warehouse);
@@ -904,7 +962,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
             <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
           </div>
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Editar</th></tr></thead>
-            <tbody>{filtered.map((row, index) => { return <tr className={pickupTiming(row.pickupDate)} key={row.id ?? `${row.sourceRow}-${index}`}>
+            <tbody>{filtered.map((row, index) => { return <tr className={`${pickupTiming(row.pickupDate)} ${row.loadStatus === "PAS" ? "pas-attention-row" : ""}`.trim()} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
               <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
@@ -1100,8 +1158,18 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeProductDetail}>Cancelar</button><button type="button" className="primary-button" onClick={() => void saveProductDetail()}>Guardar cambios</button></div>
       </section></div>}
 
+      {adjustmentSale && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal sale-modal-wide adjustment-modal" onSubmit={saveInvoiceAdjustment}>
+        <div className="modal-heading"><div><p className="eyebrow">Ajuste posterior a facturación</p><h2>Factura {adjustmentSale.invoiceNumber}</h2><p className="modal-intro">La factura original permanecerá intacta. El sistema generará una nota ligada a ella por la diferencia.</p></div></div>
+        <section className="form-section adjustment-reason-section"><div className="form-grid"><label>Motivo<select value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value as InvoiceAdjustment["reason"])}><option>CAMBIO DE PRECIO</option><option>RECHAZO PARCIAL</option><option>PRODUCTO ELIMINADO</option><option>CARGA POR ERROR</option><option>OTRO</option></select></label><label className="span-2">Descripción del ajuste<input required value={adjustmentNotes} onChange={(event) => setAdjustmentNotes(event.target.value)} placeholder="Ej. Rechazo parcial por calidad; se acreditan 25 cajas" /></label></div></section>
+        <div className="adjustment-items">{adjustmentItems.map((item, index) => <article key={`${item.product}-${index}`}><label><span>Producto</span><select value={item.product} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, product: event.target.value } : row))}><option value={item.product}>{item.product}</option>{products.filter((product) => product.name !== item.product).map((product) => <option key={product.id} value={product.name}>{product.name}</option>)}</select></label><label><span>Bultos / cajas</span><input min="1" step="1" type="number" value={item.quantity} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, quantity: Number(event.target.value) } : row))} /></label><label><span>Precio</span><input min="0" step="0.01" type="number" value={item.unitPrice} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unitPrice: Number(event.target.value) } : row))} /></label><strong>{money.format(item.quantity * item.unitPrice)}</strong><button type="button" aria-label={`Eliminar ${item.product}`} onClick={() => setAdjustmentItems((current) => current.filter((_, rowIndex) => rowIndex !== index))}>×</button></article>)}</div>
+        <button type="button" className="secondary-button add-adjustment-item" onClick={() => setAdjustmentItems((current) => [...current, { product: products[0]?.name || "Producto", presentation: products[0]?.presentation || "", size: products[0]?.size || "", label: products[0]?.label || "", quantity: 1, unitPrice: 0 }])}>＋ Agregar producto</button>
+        <div className="adjustment-summary"><span>Total vigente <strong>{money.format(invoiceItemsFor(adjustmentSale).reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span><span>Nuevo total <strong>{money.format(adjustmentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span><span>Diferencia <strong>{money.format(adjustmentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) - invoiceItemsFor(adjustmentSale).reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span></div>
+        {adjustmentSaveState && <p className="form-message">{adjustmentSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoiceAdjustment}>Cancelar</button><button type="submit" className="primary-button">Generar ajuste</button></div>
+      </form></div>}
+
       {invoicePreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
-        <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Factura {invoicePreview.invoiceNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => setInvoicePreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
+        <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Factura {invoicePreview.invoiceNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => openInvoiceAdjustment(invoicePreview)}>Crear ajuste</button><button type="button" className="secondary-button" onClick={() => setInvoicePreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
+        {adjustmentsFor(invoicePreview).length > 0 && <div className="invoice-adjustment-history"><strong>Ajustes registrados</strong>{adjustmentsFor(invoicePreview).map((adjustment) => <span key={adjustment.number}><b>{adjustment.number}</b> · {adjustment.documentType} · {adjustment.reason} · {money.format(adjustment.difference)}</span>)}</div>}
         <article className="print-document commercial-document invoice-document">
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block"><h3><span>INVOICE:</span><b>{invoicePreview.invoiceNumber}</b></h3><dl><dt>ISSUED:</dt><dd>{formatDocumentDate(invoicePreview.saleDate)}</dd><dt>P.O. #:</dt><dd>{invoicePreview.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{invoicePreview.pickupNumber}</dd><dt>PICKUP DATE:</dt><dd>{formatDocumentDate(invoicePreview.pickupDate)}</dd><dt>CREDIT TERMS:</dt><dd>21 Days</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(invoicePreview.dueDate)}</dd></dl></div></div>
           <div className="document-parties two-columns"><section><h4>BILL TO:</h4><strong>{invoicePreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{invoicePreview.warehouse}</strong>{documentWarehouse ? <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></> : <span>Pickup destination</span>}</section></div>
