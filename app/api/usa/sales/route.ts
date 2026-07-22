@@ -4,6 +4,8 @@ import { inventoryLots, sales } from "../../../../db/schema";
 import referenceSales from "../../../../lib/reference-sales.json";
 import type { InvoiceItem, NewSale } from "../../../../lib/types";
 
+const LOAD_STATUSES = new Set(["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"]);
+
 async function seedReferenceData() {
   const db = getDb();
   const existing = await db.select({ id: sales.id }).from(sales).where(eq(sales.organizationCode, "USA")).limit(1);
@@ -143,6 +145,41 @@ export async function PATCH(request: Request) {
         .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
       return Response.json({ sale });
     }
+    if (typeof payload.loadStatus === "string") {
+      const loadStatus = payload.loadStatus.trim().toUpperCase();
+      if (!LOAD_STATUSES.has(loadStatus)) return Response.json({ error: "Estatus inválido." }, { status: 400 });
+      const now = new Date().toISOString();
+      if (loadStatus === "PAS") {
+        const pasReviewDays = Number(payload.pasReviewDays);
+        if (!Number.isInteger(pasReviewDays) || pasReviewDays <= 0 || pasReviewDays > 365) {
+          return Response.json({ error: "Indica de 1 a 365 días para revisar el PAS." }, { status: 400 });
+        }
+        const requestedStart = typeof payload.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(payload.startDate) ? payload.startDate : localDateKey();
+        const start = new Date(`${requestedStart}T00:00:00Z`);
+        start.setUTCDate(start.getUTCDate() + pasReviewDays);
+        const [sale] = await getDb().update(sales).set({
+          loadStatus,
+          statusUpdatedAt: now,
+          pasReviewDays,
+          pasReviewDueDate: start.toISOString().slice(0, 10),
+        }).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
+        if (!sale) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+        return Response.json({ sale });
+      }
+      const [sale] = await getDb().update(sales).set({
+        loadStatus,
+        statusUpdatedAt: now,
+        pasReviewDays: null,
+        pasReviewDueDate: null,
+        usdaInspectionStatus: loadStatus === "USDA REQUESTED" ? "PENDING" : null,
+        usdaInspectionObjectKey: loadStatus === "USDA REQUESTED" ? undefined : null,
+        usdaInspectionFileName: loadStatus === "USDA REQUESTED" ? undefined : null,
+        usdaInspectionContentType: loadStatus === "USDA REQUESTED" ? undefined : null,
+        usdaInspectionUploadedAt: loadStatus === "USDA REQUESTED" ? undefined : null,
+      }).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
+      if (!sale) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+      return Response.json({ sale });
+    }
     const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
     const [sale] = await getDb().update(sales).set({ pickupDate, dueDate })
@@ -152,4 +189,11 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return Response.json({ error: errorMessage(error) }, { status: 500 });
   }
+}
+
+function localDateKey(date = new Date()) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

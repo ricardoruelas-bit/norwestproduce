@@ -24,6 +24,14 @@ export type Sale = {
   total: number | null;
   dueDate: string | null;
   loadStatus: string | null;
+  statusUpdatedAt?: string | null;
+  pasReviewDays?: number | null;
+  pasReviewDueDate?: string | null;
+  usdaInspectionStatus?: string | null;
+  usdaInspectionObjectKey?: string | null;
+  usdaInspectionFileName?: string | null;
+  usdaInspectionContentType?: string | null;
+  usdaInspectionUploadedAt?: string | null;
   paymentStatus: string | null;
   invoiceNumber: string | null;
   invoiceItems?: string | null;

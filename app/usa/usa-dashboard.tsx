@@ -15,6 +15,8 @@ const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be ma
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
 type Section = "dashboard" | "catalogs" | "inventory" | "invoicing" | "settings";
 type StateOption = { code: string; name: string };
+type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
+const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
   const year = date.getFullYear();
@@ -159,6 +161,12 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [userForm, setUserForm] = useState(blankUser);
   const [userSaveState, setUserSaveState] = useState("");
+  const [statusModalSale, setStatusModalSale] = useState<Sale | null>(null);
+  const [statusModalType, setStatusModalType] = useState<"PAS" | "USDA REQUESTED" | null>(null);
+  const [pasDays, setPasDays] = useState("");
+  const [usdaFile, setUsdaFile] = useState<File | null>(null);
+  const [statusSaveState, setStatusSaveState] = useState("");
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
@@ -469,6 +477,92 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     if (response.ok && data.sale) setSalesRows((current) => current.map((sale) => sale.id === row.id ? data.sale : sale));
   }
 
+  function replaceSale(updated: Sale) {
+    setSalesRows((current) => current.map((sale) => sale.id === updated.id ? updated : sale));
+  }
+
+  function openStatusModal(row: Sale, type: "PAS" | "USDA REQUESTED") {
+    setStatusModalSale(row);
+    setStatusModalType(type);
+    setPasDays("");
+    setUsdaFile(null);
+    setStatusSaveState("");
+    setNotificationsOpen(false);
+  }
+
+  function closeStatusModal() {
+    setStatusModalSale(null);
+    setStatusModalType(null);
+    setPasDays("");
+    setUsdaFile(null);
+    setStatusSaveState("");
+  }
+
+  async function changeLoadStatus(row: Sale, loadStatus: LoadStatus) {
+    if (!row.id || loadStatus === row.loadStatus) return;
+    if (loadStatus === "PAS" || loadStatus === "USDA REQUESTED") return openStatusModal(row, loadStatus);
+    try {
+      const response = await fetch("/api/usa/sales", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: row.id, loadStatus }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo cambiar el estatus.");
+      replaceSale(data.sale);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo cambiar el estatus.");
+    }
+  }
+
+  async function savePasStatus(event: FormEvent) {
+    event.preventDefault();
+    if (!statusModalSale?.id) return;
+    const days = Number(pasDays);
+    if (!Number.isInteger(days) || days <= 0 || days > 365) return setStatusSaveState("Indica de 1 a 365 días.");
+    setStatusSaveState("Guardando plazo…");
+    try {
+      const response = await fetch("/api/usa/sales", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: statusModalSale.id, loadStatus: "PAS", pasReviewDays: days, startDate: localDateKey() }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar el PAS.");
+      replaceSale(data.sale);
+      closeStatusModal();
+    } catch (error) {
+      setStatusSaveState(error instanceof Error ? error.message : "No se pudo guardar el PAS.");
+    }
+  }
+
+  function selectUsdaFile(file?: File | null) {
+    if (!file) return;
+    const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+    if (!allowedTypes.has(file.type)) {
+      setUsdaFile(null);
+      setStatusSaveState("La inspección debe ser PDF, JPG, PNG o WEBP.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUsdaFile(null);
+      setStatusSaveState("La inspección no puede exceder 10 MB.");
+      return;
+    }
+    setUsdaFile(file);
+    setStatusSaveState("");
+  }
+
+  async function saveUsdaStatus(withoutFile: boolean) {
+    if (!statusModalSale?.id) return;
+    if (!withoutFile && !usdaFile) return setStatusSaveState("Selecciona la inspección o usa “Aún no la tengo”.");
+    setStatusSaveState(withoutFile ? "Guardando como pendiente…" : "Adjuntando inspección…");
+    try {
+      const payload = new FormData();
+      payload.set("saleId", String(statusModalSale.id));
+      if (!withoutFile && usdaFile) payload.set("inspection", usdaFile);
+      const response = await fetch("/api/usa/usda-inspections", { method: "POST", body: payload });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar la inspección USDA.");
+      replaceSale(data.sale);
+      closeStatusModal();
+    } catch (error) {
+      setStatusSaveState(error instanceof Error ? error.message : "No se pudo guardar la inspección USDA.");
+    }
+  }
+
   function openInvoicing(sale?: Sale) {
     setInvoiceSale(sale ?? null);
     setSection("invoicing");
@@ -672,6 +766,18 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     if (items.length <= 1) return <><strong>{items[0]?.product || sale.product}</strong><small>{[items[0]?.presentation ?? sale.presentation, items[0]?.size ?? sale.size, items[0]?.label ?? sale.label].filter(Boolean).join(" · ") || "—"}</small></>;
     return <button type="button" className="multi-product-button" onClick={() => openProductDetail(sale)}><strong>{items.map((item) => productAlias(item.product)).join(" / ")}</strong><small>{items.length} productos · Ver detalle</small></button>;
   }
+  function statusClass(value: string | null) {
+    if (value === "OK") return "ok";
+    if (value === "PAS" || value === "USDA REQUESTED") return "warning";
+    return "adjusted";
+  }
+  function currentStatusValue(value: string | null): LoadStatus | string {
+    return value && LOAD_STATUS_OPTIONS.includes(value as LoadStatus) ? value : value || "OK";
+  }
+  const overduePas = useMemo(() => {
+    const today = localDateKey();
+    return salesRows.filter((row) => row.loadStatus === "PAS" && row.pasReviewDueDate && row.pasReviewDueDate <= today);
+  }, [salesRows]);
   const filtered = useMemo(() => salesRows.filter((row) => {
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
     return text.includes(query.toLowerCase())
@@ -749,7 +855,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       </aside>
 
       {section === "dashboard" && <section className="erp-content">
-        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Ventas y operaciones</h1></div><div className="topbar-actions"><button className="icon-button" aria-label="Notificaciones">♢<i /></button><button className="primary-button" onClick={openNewSale}>＋ Nueva venta</button></div></header>
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Ventas y operaciones</h1></div><div className="topbar-actions notification-anchor"><button className={`icon-button ${overduePas.length ? "has-notifications" : ""}`} aria-label={`Notificaciones${overduePas.length ? `: ${overduePas.length} pendientes` : ""}`} onClick={() => setNotificationsOpen((current) => !current)}>♢{overduePas.length > 0 && <b>{overduePas.length}</b>}</button>{notificationsOpen && <div className="notifications-popover"><div><strong>Notificaciones</strong><button type="button" onClick={() => setNotificationsOpen(false)}>×</button></div>{overduePas.length ? overduePas.map((row) => <button type="button" key={row.id} onClick={() => openStatusModal(row, "PAS")}><span>Revisar PAS vencido</span><strong>{row.customer}</strong><small>Pickup #{row.pickupNumber} · venció {formatDate(row.pasReviewDueDate || null)}</small></button>) : <p>No hay revisiones pendientes.</p>}</div>}<button className="primary-button" onClick={openNewSale}>＋ Nueva venta</button></div></header>
         <section className="summary-grid">
           <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Vendido hoy</p><strong>{money.format(totals.todaySales)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthSales)}</b></span></article>
           <article className="metric-card accent-blue"><div className="metric-icon">□</div><p>Cajas vendidas hoy</p><strong>{number.format(totals.todayBoxes)}</strong><span>Acumulado del mes: <b>{number.format(totals.monthBoxes)}</b></span></article>
@@ -759,7 +865,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <section className="sales-panel">
           <div className="panel-heading"><div><h2>Registro de ventas</h2><p>Partidas importadas de “VENTAS NORWEST DIC 2025 - 2026”</p></div><span className="record-count">{filtered.length} {filtered.length === 1 ? "partida" : "partidas"}</span></div>
           <div className="filters"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cliente, PO#, PU#, producto o factura" /></label>
-            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option><option>OK</option><option>SE AJUSTÓ</option><option>PRECIO PENDIENTE</option><option>SIN FACTURA</option></select>
+            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option>{LOAD_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}<option>SIN FACTURA</option></select>
             <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
           </div>
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th></tr></thead>
@@ -768,7 +874,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
               <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
-              <td><span className={`status-tag ${row.loadStatus === "OK" ? "ok" : row.loadStatus === "PRECIO PENDIENTE" ? "warning" : "adjusted"}`}>{row.loadStatus}</span></td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td>
+              <td><div className="sale-status-cell"><select className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div></td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td>
             </tr>; })}</tbody></table></div>
         </section>
       </section>}
@@ -937,6 +1043,19 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <section className="form-section"><div className="form-section-heading"><span>✓</span><div><h3>Permisos del usuario</h3><p>Autoriza individualmente cada área.</p></div></div><div className="permissions-grid">{PERMISSION_OPTIONS.map(([key, label]) => <label key={key}><input type="checkbox" checked={userForm.permissions.includes(key)} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...userForm.permissions, key] : userForm.permissions.filter((item) => item !== key)})} /><span>{label}</span></label>)}</div></section>
         {userSaveState && <p className="form-message">{userSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(false)}>Cancelar</button><button type="submit" className="primary-button">{editingUserId ? "Guardar cambios" : "Crear usuario"}</button></div>
       </form></div>}
+
+      {statusModalSale && statusModalType === "PAS" && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal status-modal" onSubmit={savePasStatus}>
+        <div className="modal-heading"><div><p className="eyebrow">Estatus · PAS</p><h2>{statusModalSale.loadStatus === "PAS" ? "Revisar plazo abierto" : "Price After Sale"}</h2><p className="modal-intro">Pickup #{statusModalSale.pickupNumber} · {statusModalSale.customer}</p></div></div>
+        {statusModalSale.loadStatus === "PAS" && statusModalSale.pasReviewDueDate && <div className={`pas-current-term ${statusModalSale.pasReviewDueDate <= localDateKey() ? "expired" : ""}`}><span>Plazo actual</span><strong>{statusModalSale.pasReviewDueDate <= localDateKey() ? "Vencido" : "Abierto"} hasta {formatDate(statusModalSale.pasReviewDueDate)}</strong></div>}
+        <section className="form-section"><label>¿Cuántos días quedará abierto el precio? *<input autoFocus required min="1" max="365" step="1" type="number" value={pasDays} onChange={(event) => setPasDays(event.target.value)} placeholder="Ej. 3" /></label><p className="field-help">Al vencer, el sistema mostrará una notificación para revisar el acuerdo o conceder más días.</p></section>
+        {statusSaveState && <p className="form-message">{statusSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeStatusModal}>Cancelar</button><button type="submit" className="primary-button">{statusModalSale.loadStatus === "PAS" ? "Dar nuevos días" : "Guardar PAS"}</button></div>
+      </form></div>}
+
+      {statusModalSale && statusModalType === "USDA REQUESTED" && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal status-modal">
+        <div className="modal-heading"><div><p className="eyebrow">Estatus · USDA Requested</p><h2>Inspección USDA</h2><p className="modal-intro">Pickup #{statusModalSale.pickupNumber} · {statusModalSale.customer}</p></div></div>
+        <section className="form-section"><div className="usda-explanation"><strong>Adjunta la inspección si ya la recibiste.</strong><span>Si los inspectores todavía no han acudido o el documento tarda en llegar, puedes guardar el estatus como pendiente y agregarlo después.</span></div><label className={`document-drop-zone ${usdaFile ? "has-file" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectUsdaFile(event.dataTransfer.files[0]); }}><input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => selectUsdaFile(event.target.files?.[0])} /><span>{usdaFile ? "✓" : "⇧"}</span><strong>{usdaFile ? usdaFile.name : "Arrastra o selecciona la inspección USDA"}</strong><small>PDF, JPG, PNG o WEBP · Máximo 10 MB</small></label></section>
+        {statusSaveState && <p className="form-message">{statusSaveState}</p>}<div className="modal-actions status-modal-actions"><button type="button" className="secondary-button" onClick={closeStatusModal}>Cancelar</button><button type="button" className="secondary-button" onClick={() => void saveUsdaStatus(true)}>Aún no la tengo</button><button type="button" className="primary-button" disabled={!usdaFile} onClick={() => void saveUsdaStatus(false)}>Guardar inspección</button></div>
+      </section></div>}
 
       {productDetailSale && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal product-detail-modal">
         <div className="modal-heading"><div><p className="eyebrow">Detalle de la carga</p><h2>Productos · Pickup #{productDetailSale.pickupNumber}</h2><p className="modal-intro">{productDetailSale.customer}</p></div></div>
