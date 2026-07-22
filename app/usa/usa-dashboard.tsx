@@ -14,6 +14,7 @@ const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on thi
 const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be made within 24 hours of arrival at destination and must be supported with a timely federal inspection fo the complete lot in question. We reserve the right to deny credit. Negotiated under P.A.C.A. terms. INTEREST WILL ACCRUE ON ANY PAST BALANCE AT THE RATE OF 1.5% PER MONTH (18% PER ANNUM.) The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
 type Section = "dashboard" | "catalogs" | "inventory" | "invoicing" | "settings";
+type CatalogType = PartnerType | "WAREHOUSE";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
@@ -137,7 +138,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [saveState, setSaveState] = useState("");
   const [section, setSection] = useState<Section>("dashboard");
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [partnerTypeFilter, setPartnerTypeFilter] = useState<PartnerType>("SUPPLIER");
+  const [partnerTypeFilter, setPartnerTypeFilter] = useState<CatalogType>("SUPPLIER");
   const [partnerModal, setPartnerModal] = useState<PartnerType | null>(null);
   const [editingPartnerId, setEditingPartnerId] = useState<number | null>(null);
   const [partnerForm, setPartnerForm] = useState(blankPartner);
@@ -180,7 +181,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [, setTotalBoxesManual] = useState(false);
   const [coldStorages, setColdStorages] = useState<ColdStorage[]>([]);
   const [coldStorageModal, setColdStorageModal] = useState(false);
-  const [coldStorageTarget, setColdStorageTarget] = useState<"inventory" | "sale">("inventory");
+  const [coldStorageTarget, setColdStorageTarget] = useState<"inventory" | "sale" | "catalog">("inventory");
+  const [editingColdStorageId, setEditingColdStorageId] = useState<number | null>(null);
   const [coldStorageForm, setColdStorageForm] = useState(blankColdStorage);
   const [coldStorageSaveState, setColdStorageSaveState] = useState("");
   const [companyForm, setCompanyForm] = useState(blankCompany);
@@ -329,7 +331,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
   async function openCatalogs() {
     setSection("catalogs");
-    await loadPartners();
+    await Promise.all([loadPartners(), loadColdStorages()]);
   }
 
   async function openPartnerForm(type: PartnerType, target: PartnerTarget = null) {
@@ -473,9 +475,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     void Promise.all([loadCaptureCatalogs(), loadExpenseConcepts()]);
   }
 
-  function openColdStorageForm(target: "inventory" | "sale" = "inventory") {
+  function openColdStorageForm(target: "inventory" | "sale" | "catalog" = "inventory", coldStorage?: ColdStorage) {
     setColdStorageTarget(target);
-    setColdStorageForm(blankColdStorage);
+    setEditingColdStorageId(coldStorage?.id ?? null);
+    setColdStorageForm(coldStorage ? { name: coldStorage.name, address: coldStorage.address, phone: coldStorage.phone } : blankColdStorage);
     setColdStorageSaveState("");
     setColdStorageModal(true);
   }
@@ -484,16 +487,17 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     event.preventDefault();
     setColdStorageSaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/cold-storages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(coldStorageForm) });
+      const response = await fetch("/api/usa/cold-storages", { method: editingColdStorageId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...coldStorageForm, id: editingColdStorageId }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar el cold storage.");
-      setColdStorages((current) => [...current, data.coldStorage].sort((a, b) => a.name.localeCompare(b.name)));
-      if (coldStorageTarget === "sale") {
+      setColdStorages((current) => (editingColdStorageId ? current.map((item) => item.id === editingColdStorageId ? data.coldStorage : item) : [...current, data.coldStorage]).sort((a, b) => a.name.localeCompare(b.name)));
+      if (!editingColdStorageId && coldStorageTarget === "sale") {
         setForm((current) => ({ ...current, warehouse: data.coldStorage.name }));
-      } else {
+      } else if (!editingColdStorageId && coldStorageTarget === "inventory") {
         setInventoryForm((current) => ({ ...current, coldStorage: data.coldStorage.name, warehouse: data.coldStorage.name }));
       }
       setColdStorageModal(false);
+      setEditingColdStorageId(null);
       setColdStorageSaveState("");
     } catch (error) {
       setColdStorageSaveState(error instanceof Error ? error.message : "No se pudo guardar el cold storage.");
@@ -1150,17 +1154,23 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       </section>}
 
       {section === "catalogs" && <section className="erp-content">
-        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Clientes y proveedores</h1></div></header>
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Catálogos</h1></div></header>
         <section className="catalog-summary">
           <button className={`catalog-type-card ${partnerTypeFilter === "SUPPLIER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("SUPPLIER")}><span className="catalog-icon">⇄</span><div><strong>Proveedores</strong><small>{partners.filter((partner) => partner.partnerType === "SUPPLIER").length} registrados</small></div></button>
           <button className={`catalog-type-card ${partnerTypeFilter === "CUSTOMER" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("CUSTOMER")}><span className="catalog-icon customer">◎</span><div><strong>Clientes</strong><small>{partners.filter((partner) => partner.partnerType === "CUSTOMER").length} registrados</small></div></button>
+          <button className={`catalog-type-card ${partnerTypeFilter === "WAREHOUSE" ? "active" : ""}`} onClick={() => setPartnerTypeFilter("WAREHOUSE")}><span className="catalog-icon warehouse">▣</span><div><strong>Bodegas</strong><small>{coldStorages.length} registradas</small></div></button>
         </section>
-        <section className="sales-panel catalog-panel">
+        {partnerTypeFilter === "WAREHOUSE" ? <section className="sales-panel catalog-panel">
+          <div className="panel-heading"><div><h2>Bodegas</h2><p>Catálogo de bodegas de destino de la operación USA</p></div><button className="primary-button" onClick={() => openColdStorageForm("catalog")}>＋ Alta de bodega</button></div>
+          <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>Dirección</th><th>Teléfono</th><th></th></tr></thead>
+            <tbody>{coldStorages.map((coldStorage) => <tr key={coldStorage.id}><td><strong>{coldStorage.name}</strong></td><td>{coldStorage.address}</td><td>{coldStorage.phone}</td><td><button type="button" className="edit-button" onClick={() => openColdStorageForm("catalog", coldStorage)}>Editar</button></td></tr>)}</tbody></table></div>
+          {coldStorages.length === 0 && <div className="catalog-empty"><strong>Aún no hay bodegas registradas</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
+        </section> : <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>{partnerTypeFilter === "SUPPLIER" ? "Proveedores" : "Clientes"}</h2><p>Catálogo exclusivo de la operación USA</p></div><button className="primary-button" onClick={() => void openPartnerForm(partnerTypeFilter)}>＋ Alta de {partnerTypeFilter === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>PACA #</th><th>TAX ID #</th><th>Blue Book #</th><th>DUNS & Bradstreet #</th><th>Dirección</th><th>{partnerTypeFilter === "SUPPLIER" ? "Contacto para pagos" : "Contacto para cobros"}</th><th></th></tr></thead>
             <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.pacaNumber || "Pendiente"}</td><td>{partner.taxId || "Pendiente"}</td><td>{partner.blueBookNumber || "Pendiente"}</td><td>{partner.dunsNumber || "Pendiente"}</td><td><strong>{[partner.street, partner.exteriorNumber && `#${partner.exteriorNumber}`, partner.interiorNumber && `Int. ${partner.interiorNumber}`].filter(Boolean).join(" ") || "Pendiente"}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td><td><strong>{partner.contactName}</strong><small>{partner.contactEmail} · {partner.contactPhone}</small></td><td><button type="button" className="edit-button" onClick={() => void editPartner(partner)}>Editar</button></td></tr>)}</tbody></table></div>
           {partners.filter((partner) => partner.partnerType === partnerTypeFilter).length === 0 && <div className="catalog-empty"><strong>Aún no hay {partnerTypeFilter === "SUPPLIER" ? "proveedores" : "clientes"} registrados</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
-        </section>
+        </section>}
       </section>}
 
       {section === "inventory" && <section className="erp-content">
@@ -1308,9 +1318,9 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
       </form></div>}
 
       {coldStorageModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveColdStorage}>
-        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>Agregar bodega</h2><p className="modal-intro">Al guardarla regresarás a {coldStorageTarget === "sale" ? "la venta" : "la entrada de inventario"} con esta bodega seleccionada.</p></div></div>
+        <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingColdStorageId ? "Editar" : "Agregar"} bodega</h2><p className="modal-intro">{coldStorageTarget === "catalog" ? "Los cambios se reflejarán en los selectores de bodega del sistema." : `Al guardarla regresarás a ${coldStorageTarget === "sale" ? "la venta" : "la entrada de inventario"} con esta bodega seleccionada.`}</p></div></div>
         <section className="form-section"><div className="form-grid"><label>Nombre de la bodega *<input required value={coldStorageForm.name} onChange={(e) => setColdStorageForm({...coldStorageForm, name:e.target.value})} /></label><label className="span-2">Dirección *<input required value={coldStorageForm.address} onChange={(e) => setColdStorageForm({...coldStorageForm, address:e.target.value})} /></label><label>Teléfono *<input required type="tel" inputMode="numeric" minLength={10} maxLength={10} pattern="[0-9]{10}" placeholder="10 dígitos" value={coldStorageForm.phone} onChange={(e) => setColdStorageForm({...coldStorageForm, phone:e.target.value.replace(/\D/g, "").slice(0, 10)})} /></label></div></section>
-        {coldStorageSaveState && <p className="form-message">{coldStorageSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setColdStorageModal(false)}>Cancelar</button><button type="submit" className="primary-button">Registrar bodega</button></div>
+        {coldStorageSaveState && <p className="form-message">{coldStorageSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setColdStorageModal(false)}>Cancelar</button><button type="submit" className="primary-button">{editingColdStorageId ? "Guardar cambios" : "Registrar bodega"}</button></div>
       </form></div>}
 
       {productModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal product-modal" onSubmit={saveProduct}>
