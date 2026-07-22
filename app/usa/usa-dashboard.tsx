@@ -135,6 +135,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [invoicePreview, setInvoicePreview] = useState<Sale | null>(null);
   const [socPreview, setSocPreview] = useState<Sale | null>(null);
   const [productDetailSale, setProductDetailSale] = useState<Sale | null>(null);
+  const [productDetailItems, setProductDetailItems] = useState<InvoiceItem[]>([]);
+  const [productDetailSaveState, setProductDetailSaveState] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [productModal, setProductModal] = useState(false);
   const [productForm, setProductForm] = useState(blankProduct);
@@ -510,6 +512,41 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     setInvoiceItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
   }
 
+  function openProductDetail(sale: Sale) {
+    setProductDetailSale(sale);
+    setProductDetailItems(invoiceItemsFor(sale));
+    setProductDetailSaveState("");
+    void loadProducts();
+  }
+
+  function closeProductDetail() {
+    setProductDetailSale(null);
+    setProductDetailItems([]);
+    setProductDetailSaveState("");
+  }
+
+  function updateProductDetailItem(index: number, changes: Partial<InvoiceItem>) {
+    setProductDetailItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
+  }
+
+  async function saveProductDetail() {
+    if (!productDetailSale?.id) return;
+    if (productDetailItems.some((item) => item.quantity <= 0 || item.unitPrice < 0)) {
+      setProductDetailSaveState("Revisa que los bultos/cajas sean mayores que cero y que los precios sean válidos.");
+      return;
+    }
+    setProductDetailSaveState("Guardando cambios…");
+    try {
+      const response = await fetch("/api/usa/sales", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: productDetailSale.id, items: productDetailItems }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo actualizar la carga.");
+      setSalesRows((current) => current.map((sale) => sale.id === data.sale.id ? data.sale : sale));
+      closeProductDetail();
+    } catch (error) {
+      setProductDetailSaveState(error instanceof Error ? error.message : "No se pudo actualizar la carga.");
+    }
+  }
+
   async function issueInvoice(event: FormEvent) {
     event.preventDefault();
     if (!invoiceSale?.id || !bolFile) return setInvoiceSaveState("Adjunta el BOL para poder facturar.");
@@ -633,7 +670,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function productCell(sale: Sale) {
     const items = invoiceItemsFor(sale);
     if (items.length <= 1) return <><strong>{items[0]?.product || sale.product}</strong><small>{[items[0]?.presentation ?? sale.presentation, items[0]?.size ?? sale.size, items[0]?.label ?? sale.label].filter(Boolean).join(" · ") || "—"}</small></>;
-    return <button type="button" className="multi-product-button" onClick={() => setProductDetailSale(sale)}><strong>{items.map((item) => productAlias(item.product)).join(" / ")}</strong><small>{items.length} productos · Ver detalle</small></button>;
+    return <button type="button" className="multi-product-button" onClick={() => openProductDetail(sale)}><strong>{items.map((item) => productAlias(item.product)).join(" / ")}</strong><small>{items.length} productos · Ver detalle</small></button>;
   }
   const filtered = useMemo(() => salesRows.filter((row) => {
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
@@ -730,7 +767,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
               <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{pickupTiming(row.pickupDate) === "pickup-today" && <small>Pickup hoy</small>}{pickupTiming(row.pickupDate) === "pickup-past" && <small>Fecha pasada</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
-              <td className="numeric">{row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
+              <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
               <td><span className={`status-tag ${row.loadStatus === "OK" ? "ok" : row.loadStatus === "PRECIO PENDIENTE" ? "warning" : "adjusted"}`}>{row.loadStatus}</span></td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : <button type="button" className="invoice-button" onClick={() => openInvoicing(row)}>Facturar</button>}</td>
             </tr>; })}</tbody></table></div>
         </section>
@@ -903,8 +940,10 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
 
       {productDetailSale && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal product-detail-modal">
         <div className="modal-heading"><div><p className="eyebrow">Detalle de la carga</p><h2>Productos · Pickup #{productDetailSale.pickupNumber}</h2><p className="modal-intro">{productDetailSale.customer}</p></div></div>
-        <div className="product-detail-list">{invoiceItemsFor(productDetailSale).map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><dl><div><dt>Bultos / cajas</dt><dd>{number.format(item.quantity)}</dd></div><div><dt>Precio</dt><dd>{money.format(item.unitPrice)}</dd></div><div><dt>Total</dt><dd>{money.format(item.quantity * item.unitPrice)}</dd></div></dl></article>)}</div>
-        <div className="modal-actions"><button type="button" className="primary-button" onClick={() => setProductDetailSale(null)}>Cerrar</button></div>
+        <div className="product-detail-list">{productDetailItems.map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><div className="product-detail-edit"><label><span>Bultos / cajas</span><input min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateProductDetailItem(index, { quantity: Number(event.target.value) })} /></label><label><span>Precio</span><input min="0" step="0.01" type="number" value={item.unitPrice} onChange={(event) => updateProductDetailItem(index, { unitPrice: Number(event.target.value) })} /></label><div><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div></div></article>)}</div>
+        <div className="product-detail-summary"><span>Total de bultos/cajas: <strong>{number.format(productDetailItems.reduce((sum, item) => sum + item.quantity, 0))}</strong></span><span>Total de la carga: <strong>{money.format(productDetailItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span></div>
+        {productDetailSaveState && <p className="form-message">{productDetailSaveState}</p>}
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeProductDetail}>Cancelar</button><button type="button" className="primary-button" onClick={() => void saveProductDetail()}>Guardar cambios</button></div>
       </section></div>}
 
       {invoicePreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
@@ -926,8 +965,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block soc-title"><h3>SALES CONFIRMATION</h3><dl><dt>ORDER #:</dt><dd>{socPreview.pickupNumber}</dd><dt>DATE:</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></dl></div></div>
           <div className="document-parties three-columns"><section><h4>CUSTOMER:</h4><strong>{socPreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{socPreview.warehouse}</strong><span>{documentWarehouse?.address || "Destination address pending"}</span></section><section><h4>WAREHOUSE:</h4><strong>{documentWarehouse?.name || socPreview.warehouse}</strong>{documentWarehouse && <><span>{documentWarehouse.address}</span><span>PH: {documentWarehouse.phone}</span></>}</section></div>
           <dl className="soc-order-meta"><div><dt>P.O. Date</dt><dd>{formatDocumentDate(socPreview.saleDate)}</dd></div><div><dt>P.O. #</dt><dd>{socPreview.purchaseOrder || "N/A"}</dd></div><div><dt>P.U. #</dt><dd>{socPreview.pickupNumber}</dd></div><div><dt>Buyer</dt><dd>{documentCustomer?.contactName || "Pending"}</dd></div><div><dt>Ship Terms</dt><dd>{socPreview.warehouse}</dd></div><div><dt>Payment Terms</dt><dd>21 Days</dd></div></dl>
-          <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody><tr><td>{socPreview.product}</td><td>{socPreview.size || "—"}</td><td>{socPreview.label || "—"}</td><td>{socPreview.presentation || "—"}</td><td className="numeric">{number.format(socPreview.boxes)}</td><td className="numeric">{socPreview.salePrice == null ? "—" : money.format(socPreview.salePrice)}</td><td className="numeric">{socPreview.total == null ? "—" : money.format(socPreview.total)}</td></tr>{Array.from({ length: 4 }).map((_, index) => <tr className="empty-item-row" key={index}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{socPreview.total == null ? "—" : money.format(socPreview.total)}</td></tr></tfoot></table>
-          <p className="amount-words">{amountInWords(socPreview.total)}</p>
+          <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody>{documentItems.map((item, index) => <tr key={index}><td>{item.product}</td><td>{item.size || "—"}</td><td>{item.label || "—"}</td><td>{item.presentation || "—"}</td><td className="numeric">{number.format(item.quantity)}</td><td className="numeric">{money.format(item.unitPrice)}</td><td className="numeric">{money.format(item.quantity * item.unitPrice)}</td></tr>)}{Array.from({ length: Math.max(0, 5 - documentItems.length) }).map((_, index) => <tr className="empty-item-row" key={`empty-${index}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{money.format(documentTotal)}</td></tr></tfoot></table>
+          <p className="amount-words">{amountInWords(documentTotal)}</p>
           <p className="document-terms soc-terms">{SALES_ORDER_TERMS}</p>
         </article>
       </section></div>}

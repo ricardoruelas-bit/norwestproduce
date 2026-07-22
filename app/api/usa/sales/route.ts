@@ -2,7 +2,7 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { inventoryLots, sales } from "../../../../db/schema";
 import referenceSales from "../../../../lib/reference-sales.json";
-import type { NewSale } from "../../../../lib/types";
+import type { InvoiceItem, NewSale } from "../../../../lib/types";
 
 async function seedReferenceData() {
   const db = getDb();
@@ -128,8 +128,22 @@ export async function PATCH(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id);
-    const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
     if (!Number.isInteger(id) || id <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
+    if (Array.isArray(payload.items)) {
+      const items = payload.items as InvoiceItem[];
+      const validItems = items.length > 1 && items.length <= 25 && items.every((item) => typeof item.product === "string" && item.product.trim() && Number.isFinite(Number(item.quantity)) && Number(item.quantity) > 0 && Number.isFinite(Number(item.unitPrice)) && Number(item.unitPrice) >= 0);
+      if (!validItems) return Response.json({ error: "Revisa los productos, bultos/cajas y precios de la carga." }, { status: 400 });
+      const [existing] = await getDb().select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
+      if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
+      const normalized = items.map((item) => ({ product: item.product.trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "", quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) }));
+      const boxes = normalized.reduce((sum, item) => sum + item.quantity, 0);
+      const total = normalized.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+      const profit = existing.purchasePrice == null ? null : total - existing.purchasePrice * boxes;
+      const [sale] = await getDb().update(sales).set({ invoiceItems: JSON.stringify(normalized), boxes, salePrice: null, total, profit, product: `${normalized[0].product} + ${normalized.length - 1} partida(s)`, presentation: null, size: null, label: null })
+        .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
+      return Response.json({ sale });
+    }
+    const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
     const [sale] = await getDb().update(sales).set({ pickupDate, dueDate })
       .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
