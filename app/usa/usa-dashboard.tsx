@@ -212,6 +212,18 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     }).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    function closeOpenFilters(event: PointerEvent) {
+      const target = event.target as Node | null;
+      document.querySelectorAll<HTMLDetailsElement>("details.filter-multiselect[open]").forEach((menu) => {
+        if (!target || !menu.contains(target)) menu.removeAttribute("open");
+      });
+    }
+
+    document.addEventListener("pointerdown", closeOpenFilters);
+    return () => document.removeEventListener("pointerdown", closeOpenFilters);
+  }, []);
+
   async function loadPartners() {
     try {
       const response = await fetch("/api/usa/partners");
@@ -941,6 +953,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     if (!value) return "";
     const today = localDateKey();
     if (value === today) return "pickup-current-row";
+    if (saleDate && value > saleDate) return "";
     if (value === saleDate) return "";
     if (value < today) return "pickup-past";
     return "";
