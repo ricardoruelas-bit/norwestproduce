@@ -20,6 +20,17 @@ function safeDownloadName(value: string) {
   return value.replace(/[\r\n"\\]/g, "_");
 }
 
+function currentDateInMazatlan() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Mazatlan",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
 export async function POST(request: Request) {
   let uploadedKey: string | null = null;
   try {
@@ -40,6 +51,8 @@ export async function POST(request: Request) {
     if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
     if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede facturarse." }, { status: 409 });
     if (existing.invoiceNumber) return Response.json({ error: "Esta venta ya fue facturada." }, { status: 409 });
+    if (!existing.pickupDate) return Response.json({ error: "Registra una fecha de pickup anterior a hoy para poder facturar." }, { status: 409 });
+    if (existing.pickupDate >= currentDateInMazatlan()) return Response.json({ error: "No se puede facturar un pickup programado para hoy o para una fecha futura." }, { status: 409 });
 
     const invoiceRows = await db.select({ invoiceNumber: sales.invoiceNumber }).from(sales)
       .where(and(eq(sales.organizationCode, "USA"), isNotNull(sales.invoiceNumber)));
