@@ -166,6 +166,7 @@ export const companySettings = sqliteTable("company_settings", {
   pacaNumber: text("paca_number").notNull().default(""),
   dunsNumber: text("duns_number").notNull().default(""),
   taxId: text("tax_id").notNull().default(""),
+  norwestProfitPercentage: real("norwest_profit_percentage").notNull().default(16),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 

@@ -14,6 +14,7 @@ const defaults = {
   pacaNumber: "",
   dunsNumber: "",
   taxId: "",
+  norwestProfitPercentage: 16,
 };
 
 function clean(value: unknown) {
@@ -40,6 +41,10 @@ export async function PATCH(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     if (!clean(payload.legalName)) return Response.json({ error: "El nombre legal de la empresa es obligatorio." }, { status: 400 });
+    const norwestProfitPercentage = Number(payload.norwestProfitPercentage ?? 16);
+    if (!Number.isFinite(norwestProfitPercentage) || norwestProfitPercentage < 0 || norwestProfitPercentage > 100) {
+      return Response.json({ error: "El porcentaje de utilidad de Norwest debe estar entre 0 y 100." }, { status: 400 });
+    }
     await getOrCreateSettings();
     const [updated] = await getDb().update(companySettings).set({
       legalName: clean(payload.legalName),
@@ -51,6 +56,7 @@ export async function PATCH(request: Request) {
       pacaNumber: clean(payload.pacaNumber),
       dunsNumber: clean(payload.dunsNumber),
       taxId: clean(payload.taxId),
+      norwestProfitPercentage,
       updatedAt: new Date().toISOString(),
     }).where(eq(companySettings.id, 1)).returning();
     return Response.json({ settings: updated });

@@ -111,7 +111,7 @@ const blankInventory = {
 
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "" };
 const blankColdStorage = { name: "", address: "", phone: "" };
-const blankCompany: Omit<CompanySettings, "id" | "organizationCode"> = { legalName: "NORWEST PRODUCE LLC", street: "710 LAUREL AVENUE", city: "MCALLEN", state: "TX", postalCode: "78501", blueBookNumber: "", pacaNumber: "", dunsNumber: "", taxId: "" };
+const blankCompany = { legalName: "NORWEST PRODUCE LLC", street: "710 LAUREL AVENUE", city: "MCALLEN", state: "TX", postalCode: "78501", blueBookNumber: "", pacaNumber: "", dunsNumber: "", taxId: "", norwestProfitPercentage: "16" };
 const blankUser = { fullName: "", alias: "", email: "", password: "", active: true, permissions: ["sales_view"] as string[] };
 const PERMISSION_OPTIONS = [
   ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
@@ -128,8 +128,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [inventory, setInventory] = useState<InventoryLot[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("TODOS");
-  const [operationType, setOperationType] = useState("TODAS");
+  const [statusFilters, setStatusFilters] = useState<string[]>(["TODOS"]);
+  const [operationFilters, setOperationFilters] = useState<string[]>(["TODAS"]);
   const [modalStep, setModalStep] = useState<"closed" | "choose" | "form">("closed");
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [form, setForm] = useState(blankSale);
@@ -204,6 +204,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
       if (Array.isArray(data.sales)) setSalesRows(data.sales);
     }).catch(() => undefined);
+    fetch("/api/usa/settings").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
+      if (!data.settings) return;
+      const settings = data.settings as CompanySettings;
+      setCompanyForm({ legalName: settings.legalName, street: settings.street, city: settings.city, state: settings.state, postalCode: settings.postalCode, blueBookNumber: settings.blueBookNumber, pacaNumber: settings.pacaNumber, dunsNumber: settings.dunsNumber, taxId: settings.taxId, norwestProfitPercentage: String(settings.norwestProfitPercentage ?? 16) });
+    }).catch(() => undefined);
   }, []);
 
   async function loadPartners() {
@@ -263,7 +268,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     const [settingsData, usersData] = await Promise.all([settingsResponse.json(), usersResponse.json()]);
     if (settingsResponse.ok && settingsData.settings) {
       const settings = settingsData.settings as CompanySettings;
-      setCompanyForm({ legalName: settings.legalName, street: settings.street, city: settings.city, state: settings.state, postalCode: settings.postalCode, blueBookNumber: settings.blueBookNumber, pacaNumber: settings.pacaNumber, dunsNumber: settings.dunsNumber, taxId: settings.taxId });
+      setCompanyForm({ legalName: settings.legalName, street: settings.street, city: settings.city, state: settings.state, postalCode: settings.postalCode, blueBookNumber: settings.blueBookNumber, pacaNumber: settings.pacaNumber, dunsNumber: settings.dunsNumber, taxId: settings.taxId, norwestProfitPercentage: String(settings.norwestProfitPercentage ?? 16) });
     }
     if (usersResponse.ok && Array.isArray(usersData.users)) setUsers(usersData.users);
   }
@@ -997,6 +1002,12 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   function currentStatusValue(value: string | null): LoadStatus | string {
     return value && LOAD_STATUS_OPTIONS.includes(value as LoadStatus) ? value : value || "OK";
   }
+  function toggleFilter(value: string, allValue: string, current: string[], update: (values: string[]) => void) {
+    if (value === allValue) return update([allValue]);
+    const withoutAll = current.filter((item) => item !== allValue);
+    const next = withoutAll.includes(value) ? withoutAll.filter((item) => item !== value) : [...withoutAll, value];
+    update(next.length ? next : [allValue]);
+  }
   const overduePas = useMemo(() => {
     const today = localDateKey();
     return salesRows.filter((row) => !row.invoiceNumber && row.loadStatus === "PAS" && row.pasReviewDueDate && row.pasReviewDueDate <= today);
@@ -1004,9 +1015,9 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const filtered = useMemo(() => salesRows.filter((row) => {
     const text = `${row.customer} ${row.purchaseOrder ?? ""} ${row.pickupNumber} ${row.product} ${row.warehouse} ${row.invoiceNumber ?? ""}`.toLowerCase();
     return text.includes(query.toLowerCase())
-      && (status === "TODOS" || (status === "SIN FACTURA" ? !row.invoiceNumber && !row.canceledAt : status === "CANCELADAS" ? Boolean(row.canceledAt) : row.loadStatus === status && !row.canceledAt))
-      && (operationType === "TODAS" || row.operationType === operationType);
-  }), [salesRows, query, status, operationType]);
+      && (statusFilters.includes("TODOS") || statusFilters.some((filter) => filter === "SIN FACTURA" ? !row.invoiceNumber && !row.canceledAt : filter === "CANCELADAS" ? Boolean(row.canceledAt) : row.loadStatus === filter && !row.canceledAt))
+      && (operationFilters.includes("TODAS") || operationFilters.includes(row.operationType));
+  }), [salesRows, query, statusFilters, operationFilters]);
 
   const totals = useMemo(() => {
     const today = localDateKey();
@@ -1101,8 +1112,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <section className="sales-panel">
           <div className="panel-heading"><div><h2>Registro de ventas</h2><p>Partidas importadas de “VENTAS NORWEST DIC 2025 - 2026”</p></div><span className="record-count">{filtered.length} {filtered.length === 1 ? "partida" : "partidas"}</span></div>
           <div className="filters"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cliente, PO#, PU#, producto o factura" /></label>
-            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estatus"><option>TODOS</option>{LOAD_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}<option>SIN FACTURA</option><option>CANCELADAS</option></select>
-            <select value={operationType} onChange={(event) => setOperationType(event.target.value)} aria-label="Filtrar por tipo de operación"><option value="TODAS">TODAS LAS OPERACIONES</option><option value="DIRECT_RESALE">COMPRA Y REVENTA</option><option value="IMPORTED_INVENTORY">INVENTARIO IMPORTADO</option></select>
+            <details className="filter-multiselect"><summary>{statusFilters.includes("TODOS") ? "TODOS LOS ESTATUS" : statusFilters.length === 1 ? statusFilters[0] : `${statusFilters.length} ESTATUS`}</summary><div className="filter-options">{["TODOS", ...LOAD_STATUS_OPTIONS, "SIN FACTURA", "CANCELADAS"].map((option) => <label key={option}><input type="checkbox" checked={statusFilters.includes(option)} onChange={() => toggleFilter(option, "TODOS", statusFilters, setStatusFilters)} /><span>{option === "TODOS" ? "Todos los estatus" : option}</span></label>)}</div></details>
+            <details className="filter-multiselect"><summary>{operationFilters.includes("TODAS") ? "TODAS LAS OPERACIONES" : operationFilters.length === 1 ? (operationFilters[0] === "DIRECT_RESALE" ? "COMPRA Y REVENTA" : "INVENTARIO IMPORTADO") : `${operationFilters.length} OPERACIONES`}</summary><div className="filter-options">{[["TODAS", "Todas las operaciones"], ["DIRECT_RESALE", "Compra y reventa"], ["IMPORTED_INVENTORY", "Inventario importado"]].map(([value, label]) => <label key={value}><input type="checkbox" checked={operationFilters.includes(value)} onChange={() => toggleFilter(value, "TODAS", operationFilters, setOperationFilters)} /><span>{label}</span></label>)}</div></details>
           </div>
           <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Editar</th></tr></thead>
             <tbody>{filtered.map((row, index) => { return <tr className={saleRowClass(row)} key={row.id ?? `${row.sourceRow}-${index}`}>
@@ -1155,6 +1166,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
               <label className="span-2">Dirección / calle<input value={companyForm.street} onChange={(e) => setCompanyForm({...companyForm, street:e.target.value})} /></label>
               <label>Ciudad<input value={companyForm.city} onChange={(e) => setCompanyForm({...companyForm, city:e.target.value})} /></label><label>Estado<input value={companyForm.state} onChange={(e) => setCompanyForm({...companyForm, state:e.target.value})} /></label><label>ZIP Code<input value={companyForm.postalCode} onChange={(e) => setCompanyForm({...companyForm, postalCode:e.target.value})} /></label>
               <label>Blue Book #<input value={companyForm.blueBookNumber} onChange={(e) => setCompanyForm({...companyForm, blueBookNumber:e.target.value})} /></label><label>PACA #<input value={companyForm.pacaNumber} onChange={(e) => setCompanyForm({...companyForm, pacaNumber:e.target.value})} /></label><label>DUNS & Bradstreet #<input value={companyForm.dunsNumber} onChange={(e) => setCompanyForm({...companyForm, dunsNumber:e.target.value})} /></label><label>TAX ID #<input value={companyForm.taxId} onChange={(e) => setCompanyForm({...companyForm, taxId:e.target.value})} /></label>
+              <label className="profit-setting">% de utilidad de Norwest<input required min="0" max="100" step="0.01" type="number" value={companyForm.norwestProfitPercentage} onChange={(e) => setCompanyForm({...companyForm, norwestProfitPercentage:e.target.value})} /><small>Se descuenta primero de la utilidad total. Valor inicial: 16%.</small></label>
             </div>
             {companySaveState && <p className="form-message settings-message">{companySaveState}</p>}<div className="settings-actions"><button type="submit" className="primary-button">Guardar configuración</button></div>
           </form>
@@ -1212,7 +1224,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingPartnerId ? "Editar" : "Alta de"} {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios. Los demás pueden agregarse o modificarse después.</p></div></div>
         {!editingPartnerId && <label className="dual-role-check"><input type="checkbox" checked={alsoOppositeType} onChange={(e) => setAlsoOppositeType(e.target.checked)} /><span><strong>{partnerModal === "SUPPLIER" ? "También es cliente" : "También es proveedor"}</strong><small>Al guardar, la empresa se agregará automáticamente en ambos catálogos.</small></span></label>}
         <section className="form-section partner-section"><div className="form-section-heading"><span>1</span><div><h3>Información fiscal y comercial</h3></div></div><div className="form-grid partner-grid">
-          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>{(partnerModal === "CUSTOMER" || alsoOppositeType) && <><label>Vendedor *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName}</option>)}</select></label><label>% de utilidad del cliente<input min="0" max="100" step="0.01" type="number" value={partnerForm.profitPercentage} onChange={(e) => setPartnerForm({...partnerForm, profitPercentage:e.target.value})} /></label></>}
+          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>{(partnerModal === "CUSTOMER" || alsoOppositeType) && <><label>Vendedor *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName}</option>)}</select></label><label className="client-profit-field">% de utilidad del cliente<input min="0" max="100" step="0.01" type="number" value={partnerForm.profitPercentage} onChange={(e) => setPartnerForm({...partnerForm, profitPercentage:e.target.value})} /><small>Se aplica sobre la utilidad restante después de descontar primero el {Number(companyForm.norwestProfitPercentage || 16)}% de Norwest.</small></label></>}
         </div></section>
         <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3><p>Selecciona primero el estado para habilitar sus ciudades.</p></div></div><div className="form-grid partner-grid">
           <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle<input value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior<input value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>

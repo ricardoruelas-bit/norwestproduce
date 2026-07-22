@@ -160,6 +160,7 @@ export type CompanySettings = {
   pacaNumber: string;
   dunsNumber: string;
   taxId: string;
+  norwestProfitPercentage: number;
 };
 
 export type UserAccount = {
