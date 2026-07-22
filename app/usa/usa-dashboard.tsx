@@ -13,7 +13,8 @@ const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "
 const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be made within 24 hours of arrival at destination and must be supported with a timely federal inspection fo the complete lot in question. We reserve the right to deny credit. Negotiated under P.A.C.A. terms. INTEREST WILL ACCRUE ON ANY PAST BALANCE AT THE RATE OF 1.5% PER MONTH (18% PER ANNUM.) The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
-type Section = "dashboard" | "catalogs" | "inventory" | "invoicing" | "settings";
+type Section = "dashboard" | "catalogs" | "inventory" | "invoicing" | "collections" | "settings";
+type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
@@ -38,6 +39,28 @@ function formatDate(value: string | null) {
 
 function formatDocumentDate(value: string | null) {
   return value ? documentDate.format(new Date(`${value}T00:00:00Z`)) : "—";
+}
+
+function collectionStatus(sale: Sale): Exclude<CollectionFilter, "TODAS"> {
+  if ((sale.paymentStatus || "").toLocaleUpperCase().includes("PAG")) return "PAGADAS";
+  return sale.dueDate && sale.dueDate < localDateKey() ? "VENCIDAS" : "VIGENTES";
+}
+
+function overdueDays(dueDate: string | null) {
+  if (!dueDate) return 0;
+  const today = new Date(`${localDateKey()}T00:00:00Z`).getTime();
+  const due = new Date(`${dueDate}T00:00:00Z`).getTime();
+  return Math.max(0, Math.floor((today - due) / 86400000));
+}
+
+function agingLabel(sale: Sale) {
+  if (collectionStatus(sale) === "PAGADAS") return "Pagada";
+  const days = overdueDays(sale.dueDate);
+  if (!days) return "Vigente";
+  if (days <= 30) return "1–30 días";
+  if (days <= 60) return "31–60 días";
+  if (days <= 90) return "61–90 días";
+  return "+90 días";
 }
 
 function amountInWords(value: number | null) {
@@ -143,6 +166,8 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
   const [saleLineItems, setSaleLineItems] = useState<InvoiceItem[]>([]);
   const [saveState, setSaveState] = useState("");
   const [section, setSection] = useState<Section>("dashboard");
+  const [collectionQuery, setCollectionQuery] = useState("");
+  const [collectionFilter, setCollectionFilter] = useState<CollectionFilter>("TODAS");
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [partnerTypeFilter, setPartnerTypeFilter] = useState<CatalogType>("SUPPLIER");
   const [partnerModal, setPartnerModal] = useState<PartnerType | null>(null);
@@ -1113,6 +1138,26 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     };
   }, [salesRows]);
 
+  const collectionData = useMemo(() => {
+    const invoices = salesRows.filter((row) => Boolean(row.invoiceNumber) && !row.canceledAt);
+    const pending = invoices.filter((row) => collectionStatus(row) !== "PAGADAS");
+    const overdue = pending.filter((row) => collectionStatus(row) === "VENCIDAS");
+    const queryValue = collectionQuery.trim().toLocaleLowerCase();
+    const rows = invoices.filter((row) => {
+      const matchesFilter = collectionFilter === "TODAS" || collectionStatus(row) === collectionFilter;
+      const matchesQuery = !queryValue || [row.customer, row.invoiceNumber, row.purchaseOrder, row.pickupNumber]
+        .some((value) => String(value || "").toLocaleLowerCase().includes(queryValue));
+      return matchesFilter && matchesQuery;
+    }).sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31"));
+    return {
+      rows,
+      total: pending.reduce((sum, row) => sum + (row.total ?? 0), 0),
+      current: pending.filter((row) => collectionStatus(row) === "VIGENTES").reduce((sum, row) => sum + (row.total ?? 0), 0),
+      overdue: overdue.reduce((sum, row) => sum + (row.total ?? 0), 0),
+      over90: overdue.filter((row) => overdueDays(row.dueDate) > 90).reduce((sum, row) => sum + (row.total ?? 0), 0),
+    };
+  }, [salesRows, collectionFilter, collectionQuery]);
+
   const inventoryCostSummary = useMemo(() => {
     const boxes = Number(inventoryForm.totalBoxes) || 0;
     const rate = Number(inventoryForm.exchangeRate) || 0;
@@ -1173,7 +1218,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         <nav>
           <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button>
           <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
-          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><a className="nav-item"><span>◎</span> Cartera</a><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
+          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => setSection("collections")}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
         </nav>
         <div className="sidebar-bottom"><div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div><Link href="/">⇄ Cambiar empresa</Link></div>
       </aside>
@@ -1257,6 +1302,23 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
         {invoiceSale && <section className="invoice-focus"><div><span>Venta seleccionada</span><h2>{invoiceSale.customer}</h2><p>Pickup #{invoiceSale.pickupNumber} · {number.format(invoiceSale.boxes)} cajas · {invoiceSale.total == null ? "Total pendiente" : money.format(invoiceSale.total)}</p>{invoiceEligibilityMessage(invoiceSale) && <small className="blocking-notice">{invoiceEligibilityMessage(invoiceSale)}</small>}</div><button type="button" className="secondary-button" onClick={() => setSection("dashboard")}>Volver a ventas</button></section>}
         <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Ventas pendientes de facturar</h2><p>Selecciona una venta desde el registro para preparar su factura.</p></div><span className="record-count">{salesRows.filter((row) => !row.invoiceNumber).length} pendientes</span></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>Bodega</th><th>Producto</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{salesRows.filter((row) => !row.invoiceNumber).map((row, index) => <tr className={invoiceSale?.id === row.id ? "selected-invoice-row" : ""} key={row.id ?? index}><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{row.pickupNumber}</td><td>{row.warehouse}</td><td>{row.product}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td><td><button type="button" className="invoice-button" disabled={Boolean(invoiceEligibilityMessage(row))} title={invoiceEligibilityMessage(row) || "Preparar factura"} onClick={() => openInvoicePreparation(row)}>Preparar factura</button></td></tr>)}</tbody></table></div>
+        </section>
+      </section>}
+
+      {section === "collections" && <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Cartera</h1></div></header>
+        <section className="collections-review-note"><div><strong>Vista inicial para revisión</strong><span>Esta pantalla ya toma las facturas generadas por el sistema. Revisaremos el flujo de pagos y abonos antes de habilitar su captura.</span></div></section>
+        <section className="summary-grid collections-summary">
+          <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Saldo por cobrar</p><strong>{money.format(collectionData.total)}</strong><span>Facturas pendientes de pago</span></article>
+          <article className="metric-card accent-blue"><div className="metric-icon">○</div><p>Cartera vigente</p><strong>{money.format(collectionData.current)}</strong><span>Aún dentro del plazo de crédito</span></article>
+          <article className="metric-card accent-gold"><div className="metric-icon">!</div><p>Cartera vencida</p><strong>{money.format(collectionData.overdue)}</strong><span>Saldo posterior a la fecha límite</span></article>
+          <article className="metric-card accent-earth"><div className="metric-icon">90</div><p>Más de 90 días</p><strong>{money.format(collectionData.over90)}</strong><span>Saldo con mayor antigüedad</span></article>
+        </section>
+        <section className="sales-panel collections-panel">
+          <div className="panel-heading"><div><h2>Cuentas por cobrar</h2><p>Facturas, vencimientos y antigüedad de saldos.</p></div><span className="record-count">{collectionData.rows.length} {collectionData.rows.length === 1 ? "factura" : "facturas"}</span></div>
+          <div className="filters collections-filters"><label className="search-box"><span>⌕</span><input value={collectionQuery} onChange={(event) => setCollectionQuery(event.target.value)} placeholder="Buscar cliente, factura, PO# o pickup" /></label><div className="collection-filter-buttons">{(["TODAS", "VIGENTES", "VENCIDAS", "PAGADAS"] as CollectionFilter[]).map((filter) => <button type="button" className={collectionFilter === filter ? "active" : ""} key={filter} onClick={() => setCollectionFilter(filter)}>{filter === "TODAS" ? "Todas" : filter.charAt(0) + filter.slice(1).toLocaleLowerCase()}</button>)}</div></div>
+          <div className="table-wrap collections-table"><table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Vencimiento</th><th>Antigüedad</th><th>Estatus</th><th className="numeric">Saldo</th><th></th></tr></thead><tbody>{collectionData.rows.map((row) => { const status = collectionStatus(row); const days = overdueDays(row.dueDate); return <tr key={row.id}><td><strong>#{row.invoiceNumber}</strong><small>Pickup #{row.pickupNumber}</small></td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{formatDate(row.saleDate)}</td><td>{formatDate(row.dueDate)}</td><td><span className={`aging-chip ${days > 90 ? "critical" : days ? "overdue" : "current"}`}>{agingLabel(row)}</span></td><td><span className={`collection-status ${status.toLocaleLowerCase()}`}>{status === "PAGADAS" ? "Pagada" : status === "VENCIDAS" ? "Vencida" : "Vigente"}</span></td><td className="numeric strong-number">{money.format(status === "PAGADAS" ? 0 : row.total ?? 0)}</td><td><button type="button" className="edit-button" onClick={() => openInvoicePreview(row)}>Ver factura</button></td></tr>; })}</tbody></table></div>
+          {collectionData.rows.length === 0 && <div className="catalog-empty"><strong>No hay facturas en esta vista</strong><span>Cambia el filtro o genera una factura para que aparezca en cartera.</span></div>}
         </section>
       </section>}
 

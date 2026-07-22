@@ -245,6 +245,7 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 }
 
 .invoice-terms { margin-top:28px; font-size:6.75px; line-height:1.14; text-align:justify; }
+.collections-review-note{display:flex;align-items:center;margin:0 0 18px;padding:14px 16px;border:1px solid #d7e7e2;border-left:4px solid var(--green);border-radius:11px;background:#f5faf8}.collections-review-note strong,.collections-review-note span{display:block}.collections-review-note strong{color:var(--green-dark);font-size:11px}.collections-review-note span{margin-top:4px;color:var(--muted);font-size:9px}.collections-summary{margin-bottom:18px}.collections-panel{max-width:1550px;margin:0 auto}.collections-filters{align-items:center}.collection-filter-buttons{display:flex;gap:6px;flex-wrap:wrap}.collection-filter-buttons button{height:37px;padding:0 13px;border:1px solid #d8e2df;border-radius:9px;background:#fff;color:#657570;font-size:9px;font-weight:800;cursor:pointer}.collection-filter-buttons button:hover,.collection-filter-buttons button.active{border-color:var(--green);background:#eaf6f2;color:var(--green-dark)}.collections-table table{min-width:980px}.aging-chip,.collection-status{display:inline-flex;align-items:center;min-height:24px;padding:0 9px;border-radius:20px;font-size:8px;font-weight:850;white-space:nowrap}.aging-chip.current{background:#e6f4ef;color:#287365}.aging-chip.overdue{background:#fff1d6;color:#9a641b}.aging-chip.critical{background:#fbe7e3;color:#a24d41}.collection-status.vigentes{background:#e6f4ef;color:#287365}.collection-status.vencidas{background:#fbe7e3;color:#a24d41}.collection-status.pagadas{background:#edf2f1;color:#60716d}
 .settings-layout { display:grid; gap:18px; max-width:1550px; margin:0 auto; }
 .settings-card { padding-bottom:20px; }
 .settings-form-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:4px 22px 8px; }
@@ -264,7 +265,7 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .permissions-grid input { accent-color:var(--green); }
 
 @media(max-width:1050px){.settings-form-grid{grid-template-columns:1fr 1fr}.permissions-grid{grid-template-columns:1fr 1fr}}
-@media(max-width:760px){.settings-form-grid{grid-template-columns:1fr}.settings-form-grid .span-2{grid-column:auto}.permissions-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.settings-form-grid{grid-template-columns:1fr}.settings-form-grid .span-2{grid-column:auto}.permissions-grid{grid-template-columns:1fr}.collections-filters{align-items:stretch}.collection-filter-buttons{display:grid;grid-template-columns:1fr 1fr}.collection-filter-buttons button{width:100%}}
 
 @media(max-width:760px){.product-detail-list article{grid-template-columns:42px 1fr}.product-detail-edit{grid-column:1/-1}.product-detail-summary{flex-direction:column;gap:8px}}
 @media(max-width:760px){.invoice-adjustment-history article{grid-template-columns:1fr}.adjustment-document-summary{grid-template-columns:1fr 1fr}}
