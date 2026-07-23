@@ -45,6 +45,17 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "No fue posible completar la operación.";
 }
 
+function currentDateInMazatlan() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Mazatlan",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
 export async function GET() {
   try {
     await seedReferenceData();
@@ -65,6 +76,11 @@ export async function POST(request: Request) {
     if (!payload.saleDate || !payload.customer?.trim() || !payload.warehouse?.trim() || !payload.pickupNumber?.trim() || !payload.product?.trim()) {
       return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
     }
+    const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
+    if (pickupDate && pickupDate < currentDateInMazatlan()) {
+      return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
+    }
+    const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
     const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
     const directItems = operationType === "DIRECT_RESALE" && Array.isArray(payload.items) ? payload.items.map((item) => ({ product: String(item.product || "").trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "", quantity: Number(item.quantity), purchasePrice: Number(item.purchasePrice), unitPrice: Number(item.unitPrice) })) : [];
     if (operationType === "DIRECT_RESALE" && (!directItems.length || directItems.length > 25 || directItems.some((item) => !item.product || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.purchasePrice) || item.purchasePrice < 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0))) {
@@ -113,9 +129,9 @@ export async function POST(request: Request) {
       salePrice: directItems.length > 1 ? null : primary?.unitPrice ?? (Number.isFinite(salePrice) ? salePrice : null),
       profit,
       shipDate: payload.shipDate || null,
-      pickupDate: payload.pickupDate || null,
+      pickupDate,
       total,
-      dueDate: payload.dueDate || null,
+      dueDate,
       loadStatus: payload.loadStatus?.trim() || "OK",
       paymentStatus: "PENDIENTE",
       invoiceNumber: payload.invoiceNumber?.trim() || null,
@@ -175,6 +191,10 @@ export async function PATCH(request: Request) {
       if (!saleDate || !customer || !warehouse || !pickupNumber || !product) {
         return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
       }
+      const pickupDate = text(payload.pickupDate) || null;
+      if (pickupDate && pickupDate < currentDateInMazatlan()) {
+        return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
+      }
       const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
       const directItems = operationType === "DIRECT_RESALE" && Array.isArray(payload.items) ? (payload.items as InvoiceItem[]).map((item) => ({ product: String(item.product || "").trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "", quantity: Number(item.quantity), purchasePrice: Number(item.purchasePrice), unitPrice: Number(item.unitPrice) })) : [];
       if (operationType === "DIRECT_RESALE" && (!directItems.length || directItems.length > 25 || directItems.some((item) => !item.product || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.purchasePrice) || item.purchasePrice < 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0))) {
@@ -214,7 +234,6 @@ export async function PATCH(request: Request) {
       const total = directItems.length ? directItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) : boxes * salePrice;
       const profit = directItems.length ? directItems.reduce((sum, item) => sum + (item.unitPrice - item.purchasePrice) * item.quantity, 0) : purchasePrice == null ? null : (salePrice - purchasePrice) * boxes;
       const primary = directItems[0];
-      const pickupDate = text(payload.pickupDate) || null;
       const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
       const [sale] = await db.update(sales).set({
         supplier: text(payload.supplier) || null,
@@ -299,6 +318,9 @@ export async function PATCH(request: Request) {
       return Response.json({ sale });
     }
     const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
+    if (pickupDate && pickupDate < currentDateInMazatlan()) {
+      return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
+    }
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
     const [sale] = await getDb().update(sales).set({ pickupDate, dueDate })
       .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.canceledAt))).returning();
@@ -307,11 +329,4 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return Response.json({ error: errorMessage(error) }, { status: 500 });
   }
-}
-
-function localDateKey(date = new Date()) {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
