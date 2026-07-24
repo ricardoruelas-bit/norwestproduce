@@ -1,39 +1,85 @@
-import Link from "next/link";
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function Home() {
+  const router = useRouter();
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  function submitLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    router.push("/usa");
+  }
+
   return (
-    <main className="company-gateway">
-      <div className="gateway-glow gateway-glow-one" />
-      <div className="gateway-glow gateway-glow-two" />
-      <section className="gateway-panel">
-        <div className="brand-lockup gateway-brand-lockup">
-          <img src="/norwest-logo.jpg?v=23" alt="Norwest Produce" width="1528" height="473" />
-        </div>
-        <p className="eyebrow">Sistema administrativo</p>
-        <h1>Selecciona la operación</h1>
-        <p className="gateway-copy">Cada empresa mantiene sus propios datos, folios, clientes, ventas y reportes.</p>
-        <div className="company-grid">
-          <Link href="/usa" className="company-card company-card-usa">
-            <div className="flag-pill">USA</div>
-            <div>
-              <p className="company-kicker">Operación Estados Unidos</p>
-              <h2>Norwest Produce LLC</h2>
-              <p>Ventas, cargas, facturación y cartera en dólares.</p>
+    <main className="login-gateway">
+      <img
+        className="login-gateway-image"
+        src="/norwest-login-hero.png"
+        alt="Norwest Produce"
+      />
+      <button
+        className="login-access-button"
+        type="button"
+        onClick={() => setLoginOpen(true)}
+      >
+        Ingresar
+      </button>
+
+      {loginOpen && (
+        <div className="login-modal-backdrop" role="presentation">
+          <form className="login-modal" onSubmit={submitLogin}>
+            <div className="login-modal-heading">
+              <p className="eyebrow">Norwest Produce</p>
+              <h1>Iniciar sesion</h1>
             </div>
-            <span className="company-arrow">→</span>
-          </Link>
-          <Link href="/mexico" className="company-card company-card-mx">
-            <div className="flag-pill">MX</div>
-            <div>
-              <p className="company-kicker">Operación nacional</p>
-              <h2>Norwest Produce</h2>
-              <p>Módulo separado con sus propios catálogos y movimientos.</p>
+            <label>
+              Correo
+              <input
+                autoComplete="email"
+                name="email"
+                placeholder="correo@empresa.com"
+                required
+                type="email"
+              />
+            </label>
+            <label>
+              Contrasena
+              <span className="password-field">
+                <input
+                  autoComplete="current-password"
+                  name="password"
+                  placeholder="Ingresa tu contrasena"
+                  required
+                  type={showPassword ? "text" : "password"}
+                />
+                <button
+                  aria-label={showPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                  className={`password-eye-button ${showPassword ? "visible" : ""}`}
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                >
+                  <span />
+                </button>
+              </span>
+            </label>
+            <div className="login-modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setLoginOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button className="primary-button" type="submit">
+                Iniciar sesion
+              </button>
             </div>
-            <span className="company-arrow">→</span>
-          </Link>
+          </form>
         </div>
-        <p className="gateway-note"><span /> Los registros nunca se mezclan entre empresas</p>
-      </section>
+      )}
     </main>
   );
 }
