@@ -12,7 +12,8 @@ function permissions(value: unknown) {
 async function ensureDefaultAdminUser(db: ReturnType<typeof getDb>) {
   const [existing] = await db.select().from(userAccounts).where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.email, DEFAULT_ADMIN_USER.email))).limit(1);
   if (existing) {
-    await db.update(userAccounts).set({ fullName: DEFAULT_ADMIN_USER.fullName, alias: DEFAULT_ADMIN_USER.alias, passwordHash: DEFAULT_ADMIN_USER.passwordHash, permissions: DEFAULT_ADMIN_USER.permissions, active: true }).where(eq(userAccounts.id, existing.id));
+    // Never overwrite the password — allow the admin to change it from the app
+    await db.update(userAccounts).set({ fullName: DEFAULT_ADMIN_USER.fullName, alias: DEFAULT_ADMIN_USER.alias, permissions: DEFAULT_ADMIN_USER.permissions, active: true }).where(eq(userAccounts.id, existing.id));
     return;
   }
   await db.insert(userAccounts).values({ organizationCode: "USA", fullName: DEFAULT_ADMIN_USER.fullName, alias: DEFAULT_ADMIN_USER.alias, email: DEFAULT_ADMIN_USER.email, passwordHash: DEFAULT_ADMIN_USER.passwordHash, permissions: DEFAULT_ADMIN_USER.permissions, profitPercentage: 0, active: true });
