@@ -1,54 +1,31 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { userAccounts } from "../../../../db/schema";
+import { ALL_USER_PERMISSIONS, DEFAULT_ADMIN_USER, clean, hashPassword, safeUser, verifyPassword } from "../../../../lib/auth";
 
-const allowedPermissions = new Set(["sales_view", "sales_edit", "inventory", "invoicing", "collections", "catalogs", "reports", "settings", "users"]);
-
-function clean(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
-
-async function hashPassword(password: string) {
-  const iterations = 100000;
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
-  const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-  return `pbkdf2-sha256$${iterations}$${encode(salt)}$${encode(new Uint8Array(bits))}`;
-}
-
-async function verifyPassword(password: string, storedHash: string) {
-  const [algorithm, iterationsText, saltText, expectedText] = storedHash.split("$");
-  const iterations = Number(iterationsText);
-  if (algorithm !== "pbkdf2-sha256" || !Number.isInteger(iterations) || iterations <= 0 || !saltText || !expectedText) return false;
-
-  try {
-    const decode = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
-    const salt = decode(saltText);
-    const expected = decode(expectedText);
-    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-    const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, expected.length * 8);
-    const actual = new Uint8Array(bits);
-    if (actual.length !== expected.length) return false;
-    let difference = 0;
-    for (let index = 0; index < actual.length; index += 1) difference |= actual[index] ^ expected[index];
-    return difference === 0;
-  } catch {
-    return false;
-  }
-}
-
-function safeUser(user: typeof userAccounts.$inferSelect) {
-  return { id: user.id, organizationCode: user.organizationCode, fullName: user.fullName, alias: user.alias, email: user.email, permissions: user.permissions, active: user.active, createdAt: user.createdAt };
-}
+const allowedPermissions = new Set<string>(ALL_USER_PERMISSIONS);
 
 function permissions(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && allowedPermissions.has(item)) : [];
 }
 
+async function ensureDefaultAdminUser(db: ReturnType<typeof getDb>) {
+  const [existing] = await db.select().from(userAccounts).where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.email, DEFAULT_ADMIN_USER.email))).limit(1);
+  if (existing) {
+    await db.update(userAccounts).set({ fullName: DEFAULT_ADMIN_USER.fullName, alias: DEFAULT_ADMIN_USER.alias, passwordHash: DEFAULT_ADMIN_USER.passwordHash, permissions: DEFAULT_ADMIN_USER.permissions, active: true }).where(eq(userAccounts.id, existing.id));
+    return;
+  }
+  await db.insert(userAccounts).values({ organizationCode: "USA", fullName: DEFAULT_ADMIN_USER.fullName, alias: DEFAULT_ADMIN_USER.alias, email: DEFAULT_ADMIN_USER.email, passwordHash: DEFAULT_ADMIN_USER.passwordHash, permissions: DEFAULT_ADMIN_USER.permissions, profitPercentage: 0, active: true });
+}
+
 export async function GET() {
   try {
-    const users = await getDb().select().from(userAccounts).where(eq(userAccounts.organizationCode, "USA")).orderBy(asc(userAccounts.fullName));
+    const db = getDb();
+    await ensureDefaultAdminUser(db);
+    const users = await db.select().from(userAccounts).where(eq(userAccounts.organizationCode, "USA")).orderBy(asc(userAccounts.fullName));
     return Response.json({ users: users.map(safeUser) });
   } catch (error) {
+    if (error instanceof Error && error.message.includes("D1 binding")) return Response.json({ users: [safeUser(DEFAULT_ADMIN_USER)] });
     return Response.json({ error: error instanceof Error ? error.message : "No fue posible consultar los usuarios." }, { status: 500 });
   }
 }

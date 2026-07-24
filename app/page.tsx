@@ -7,10 +7,29 @@ export default function Home() {
   const router = useRouter();
   const [loginOpen, setLoginOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
 
-  function submitLogin(event: FormEvent<HTMLFormElement>) {
+  async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    router.push("/usa");
+    const formData = new FormData(event.currentTarget);
+    setLoginError("");
+    setLoginLoading(true);
+
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "No fue posible iniciar sesion.");
+      router.push("/usa");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "No fue posible iniciar sesion.");
+    } finally {
+      setLoginLoading(false);
+    }
   }
 
   return (
@@ -23,7 +42,10 @@ export default function Home() {
       <button
         className="login-access-button"
         type="button"
-        onClick={() => setLoginOpen(true)}
+        onClick={() => {
+          setLoginError("");
+          setLoginOpen(true);
+        }}
       >
         Ingresar
       </button>
@@ -69,14 +91,18 @@ export default function Home() {
               <button
                 className="secondary-button"
                 type="button"
-                onClick={() => setLoginOpen(false)}
+                onClick={() => {
+                  setLoginError("");
+                  setLoginOpen(false);
+                }}
               >
                 Cancelar
               </button>
-              <button className="primary-button" type="submit">
-                Iniciar sesion
+              <button className="primary-button" type="submit" disabled={loginLoading}>
+                {loginLoading ? "Validando..." : "Iniciar sesion"}
               </button>
             </div>
+            {loginError && <p className="login-error">{loginError}</p>}
           </form>
         </div>
       )}
