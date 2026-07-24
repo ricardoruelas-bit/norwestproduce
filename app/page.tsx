@@ -24,7 +24,7 @@ export default function Home() {
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error || "No fue posible iniciar sesion.");
-      router.push("/usa");
+      router.push("/empresas");
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "No fue posible iniciar sesion.");
     } finally {

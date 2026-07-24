@@ -12,9 +12,8 @@ export default function MexicoModule() {
           <strong>Sistema nacional conservado por separado</strong>
           <span>Continuaremos este módulo desde su propia base y flujo operativo.</span>
         </div>
-        <Link href="/" className="text-link">← Cambiar de empresa</Link>
+        <Link href="/empresas" className="text-link">← Cambiar de empresa</Link>
       </section>
     </main>
   );
 }
-
