@@ -296,7 +296,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     try {
       const response = await fetch("/api/usa/inventory?all=1");
       const data = await response.json();
-      const concepts = (Array.isArray(data.lots) ? data.lots : []).flatMap((lot: InventoryLot) => {
+      const concepts: string[] = (Array.isArray(data.lots) ? data.lots : []).flatMap((lot: InventoryLot) => {
         try {
           const expenses = JSON.parse(lot.additionalExpenses || "[]") as Array<{ concept?: string }>;
           return expenses.map((item) => item.concept?.trim()).filter((item): item is string => Boolean(item));
@@ -304,7 +304,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           return [];
         }
       });
-      setExpenseConcepts(Array.from(new Map(concepts.map((item: string) => [item.toLocaleLowerCase(), item])).values()).sort((a, b) => a.localeCompare(b)));
+      setExpenseConcepts(Array.from(new Map<string, string>(concepts.map((item) => [item.toLocaleLowerCase(), item])).values()).sort((a, b) => a.localeCompare(b)));
     } catch {
       setExpenseConcepts([]);
     }
