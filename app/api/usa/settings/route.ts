@@ -22,7 +22,7 @@ function clean(value: unknown) {
 }
 
 async function getOrCreateSettings() {
-  const db = getDb();
+  const db = await getDb();
   const [existing] = await db.select().from(companySettings).where(eq(companySettings.id, 1)).limit(1);
   if (existing) return existing;
   const [created] = await db.insert(companySettings).values(defaults).returning();
@@ -46,7 +46,8 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "El porcentaje de utilidad de Norwest debe estar entre 0 y 100." }, { status: 400 });
     }
     await getOrCreateSettings();
-    const [updated] = await getDb().update(companySettings).set({
+    const db = await getDb();
+    const [updated] = await db.update(companySettings).set({
       legalName: clean(payload.legalName),
       street: clean(payload.street),
       city: clean(payload.city),

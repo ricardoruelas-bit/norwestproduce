@@ -5,7 +5,8 @@ import { inventoryLots } from "../../../../db/schema";
 export async function GET(request: Request) {
   try {
     const includeAll = new URL(request.url).searchParams.get("all") === "1";
-    const lots = await getDb().select().from(inventoryLots).where(includeAll
+    const db = await getDb();
+    const lots = await db.select().from(inventoryLots).where(includeAll
       ? eq(inventoryLots.organizationCode, "USA")
       : and(eq(inventoryLots.organizationCode, "USA"), gt(inventoryLots.availableBoxes, 0)))
       .orderBy(desc(inventoryLots.receivedDate), asc(inventoryLots.product));
@@ -64,7 +65,8 @@ export async function POST(request: Request) {
       + toUsd(coldStorageCost, currency("coldStorageCost"))
       + additionalExpenses.reduce((sum, item) => sum + toUsd(item.amount, item.currency), 0);
     const unitCost = totalImportCost / totalBoxes;
-    const [lot] = await getDb().insert(inventoryLots).values({
+    const db = await getDb();
+    const [lot] = await db.insert(inventoryLots).values({
       organizationCode: "USA",
       receivedDate: clean(payload.receivedDate),
       supplier: clean(payload.supplier) || null,

@@ -21,7 +21,8 @@ export async function POST(request: Request) {
     let user: ReturnType<typeof safeUser> | null = null;
 
     try {
-      const [row] = await getDb()
+      const db = await getDb();
+      const [row] = await db
         .select()
         .from(userAccounts)
         .where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.email, email)))

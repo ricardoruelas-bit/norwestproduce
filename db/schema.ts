@@ -1,10 +1,10 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { boolean, doublePrecision, index, integer, pgTable, serial, text } from "drizzle-orm/pg-core";
 
-export const inventoryLots = sqliteTable(
+export const inventoryLots = pgTable(
   "inventory_lots",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     organizationCode: text("organization_code").notNull().default("USA"),
     receivedDate: text("received_date").notNull(),
     supplier: text("supplier"),
@@ -18,20 +18,20 @@ export const inventoryLots = sqliteTable(
     boxesPerPallet: integer("boxes_per_pallet"),
     palletsPerLoad: integer("pallets_per_load"),
     availableBoxes: integer("available_boxes").notNull(),
-    unitCost: real("unit_cost"),
-    purchasePrice: real("purchase_price"),
-    freightCost: real("freight_cost").notNull().default(0),
-    mexicoCustomsCost: real("mexico_customs_cost").notNull().default(0),
-    usCustomsCost: real("us_customs_cost").notNull().default(0),
-    overweightCost: real("overweight_cost").notNull().default(0),
-    redLightCost: real("red_light_cost").notNull().default(0),
+    unitCost: doublePrecision("unit_cost"),
+    purchasePrice: doublePrecision("purchase_price"),
+    freightCost: doublePrecision("freight_cost").notNull().default(0),
+    mexicoCustomsCost: doublePrecision("mexico_customs_cost").notNull().default(0),
+    usCustomsCost: doublePrecision("us_customs_cost").notNull().default(0),
+    overweightCost: doublePrecision("overweight_cost").notNull().default(0),
+    redLightCost: doublePrecision("red_light_cost").notNull().default(0),
     coldStorage: text("cold_storage"),
-    coldStorageCost: real("cold_storage_cost").notNull().default(0),
+    coldStorageCost: doublePrecision("cold_storage_cost").notNull().default(0),
     additionalExpenses: text("additional_expenses").notNull().default("[]"),
     costCurrencies: text("cost_currencies").notNull().default("{}"),
-    exchangeRate: real("exchange_rate"),
-    totalImportCost: real("total_import_cost"),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    exchangeRate: doublePrecision("exchange_rate"),
+    totalImportCost: doublePrecision("total_import_cost"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [
     index("inventory_org_product_idx").on(table.organizationCode, table.product),
@@ -39,38 +39,38 @@ export const inventoryLots = sqliteTable(
   ],
 );
 
-export const coldStorages = sqliteTable(
+export const coldStorages = pgTable(
   "cold_storages",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     organizationCode: text("organization_code").notNull().default("USA"),
     name: text("name").notNull(),
     address: text("address").notNull(),
     phone: text("phone").notNull(),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [index("cold_storage_org_name_idx").on(table.organizationCode, table.name)],
 );
 
-export const products = sqliteTable(
+export const products = pgTable(
   "products",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     organizationCode: text("organization_code").notNull().default("USA"),
     name: text("name").notNull(),
     alias: text("alias").notNull().default(""),
     presentation: text("presentation"),
     size: text("size"),
     label: text("label"),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [index("products_org_name_idx").on(table.organizationCode, table.name)],
 );
 
-export const sales = sqliteTable(
+export const sales = pgTable(
   "sales",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     organizationCode: text("organization_code").notNull().default("USA"),
     operationType: text("operation_type").notNull().default("DIRECT_RESALE"),
     supplier: text("supplier"),
@@ -86,12 +86,12 @@ export const sales = sqliteTable(
     presentation: text("presentation"),
     size: text("size"),
     label: text("label"),
-    purchasePrice: real("purchase_price"),
-    salePrice: real("sale_price"),
-    profit: real("profit"),
+    purchasePrice: doublePrecision("purchase_price"),
+    salePrice: doublePrecision("sale_price"),
+    profit: doublePrecision("profit"),
     shipDate: text("ship_date"),
     pickupDate: text("pickup_date"),
-    total: real("total"),
+    total: doublePrecision("total"),
     dueDate: text("due_date"),
     loadStatus: text("load_status").notNull().default("OK"),
     statusUpdatedAt: text("status_updated_at"),
@@ -115,7 +115,7 @@ export const sales = sqliteTable(
     canceledBy: text("canceled_by"),
     cancellationReason: text("cancellation_reason"),
     cancellationDetail: text("cancellation_detail"),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [
     index("sales_org_date_idx").on(table.organizationCode, table.saleDate),
@@ -123,10 +123,10 @@ export const sales = sqliteTable(
   ],
 );
 
-export const businessPartners = sqliteTable(
+export const businessPartners = pgTable(
   "business_partners",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     organizationCode: text("organization_code").notNull().default("USA"),
     partnerType: text("partner_type").notNull(),
     name: text("name").notNull(),
@@ -145,8 +145,8 @@ export const businessPartners = sqliteTable(
     contactEmail: text("contact_email").notNull(),
     contactPhone: text("contact_phone").notNull(),
     assignedSeller: text("assigned_seller"),
-    profitPercentage: real("profit_percentage").notNull().default(0),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    profitPercentage: doublePrecision("profit_percentage").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [
     index("partners_org_type_name_idx").on(table.organizationCode, table.partnerType, table.name),
@@ -154,7 +154,7 @@ export const businessPartners = sqliteTable(
   ],
 );
 
-export const companySettings = sqliteTable("company_settings", {
+export const companySettings = pgTable("company_settings", {
   id: integer("id").primaryKey().default(1),
   organizationCode: text("organization_code").notNull().default("USA"),
   legalName: text("legal_name").notNull().default("NORWEST PRODUCE LLC"),
@@ -166,23 +166,23 @@ export const companySettings = sqliteTable("company_settings", {
   pacaNumber: text("paca_number").notNull().default(""),
   dunsNumber: text("duns_number").notNull().default(""),
   taxId: text("tax_id").notNull().default(""),
-  norwestProfitPercentage: real("norwest_profit_percentage").notNull().default(16),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  norwestProfitPercentage: doublePrecision("norwest_profit_percentage").notNull().default(16),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
 });
 
-export const userAccounts = sqliteTable(
+export const userAccounts = pgTable(
   "user_accounts",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     organizationCode: text("organization_code").notNull().default("USA"),
     fullName: text("full_name").notNull(),
     alias: text("alias").notNull(),
     email: text("email").notNull(),
     passwordHash: text("password_hash").notNull(),
     permissions: text("permissions").notNull().default("[]"),
-    profitPercentage: real("profit_percentage").notNull().default(0),
-    active: integer("active", { mode: "boolean" }).notNull().default(true),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    profitPercentage: doublePrecision("profit_percentage").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [
     index("users_org_alias_idx").on(table.organizationCode, table.alias),

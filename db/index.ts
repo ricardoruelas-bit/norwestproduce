@@ -1,25 +1,253 @@
-import { drizzle } from "drizzle-orm/d1";
+import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { del as deleteBlob, get as getBlob, put as putBlob } from "@vercel/blob";
+import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
-type RuntimeBindings = { DB?: D1Database; BUCKET?: R2Bucket };
+type CloudflareBucket = {
+  put(key: string, value: BodyInit, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<unknown>;
+  get(key: string): Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string } } | null>;
+  delete(key: string): Promise<void>;
+};
+
+type RuntimeBindings = { BUCKET?: CloudflareBucket };
 
 declare global {
   var __NORWEST_RUNTIME_BINDINGS__: RuntimeBindings | undefined;
 }
 
-export function getDb() {
-  const database = globalThis.__NORWEST_RUNTIME_BINDINGS__?.DB;
-  if (!database) {
-    throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
-    );
+type DbClient = NeonHttpDatabase<typeof schema>;
+
+let queryClient: NeonQueryFunction<false, false> | undefined;
+let database: DbClient | undefined;
+let initialization: Promise<void> | undefined;
+
+function databaseUrl() {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.NEON_DATABASE_URL;
+}
+
+async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS inventory_lots (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      received_date TEXT NOT NULL,
+      supplier TEXT,
+      warehouse TEXT NOT NULL,
+      pickup_number TEXT,
+      product TEXT NOT NULL,
+      presentation TEXT,
+      size TEXT,
+      label TEXT,
+      total_boxes INTEGER NOT NULL,
+      boxes_per_pallet INTEGER,
+      pallets_per_load INTEGER,
+      available_boxes INTEGER NOT NULL,
+      unit_cost DOUBLE PRECISION,
+      purchase_price DOUBLE PRECISION,
+      freight_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      mexico_customs_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      us_customs_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      overweight_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      red_light_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      cold_storage TEXT,
+      cold_storage_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      additional_expenses TEXT NOT NULL DEFAULT '[]',
+      cost_currencies TEXT NOT NULL DEFAULT '{}',
+      exchange_rate DOUBLE PRECISION,
+      total_import_cost DOUBLE PRECISION,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS cold_storages (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      name TEXT NOT NULL,
+      address TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS products (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      name TEXT NOT NULL,
+      alias TEXT NOT NULL DEFAULT '',
+      presentation TEXT,
+      size TEXT,
+      label TEXT,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS sales (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      operation_type TEXT NOT NULL DEFAULT 'DIRECT_RESALE',
+      supplier TEXT,
+      inventory_lot_id INTEGER REFERENCES inventory_lots(id),
+      sale_date TEXT NOT NULL,
+      customer TEXT NOT NULL,
+      seller_name TEXT,
+      purchase_order TEXT,
+      warehouse TEXT NOT NULL,
+      pickup_number TEXT NOT NULL,
+      boxes INTEGER NOT NULL,
+      product TEXT NOT NULL,
+      presentation TEXT,
+      size TEXT,
+      label TEXT,
+      purchase_price DOUBLE PRECISION,
+      sale_price DOUBLE PRECISION,
+      profit DOUBLE PRECISION,
+      ship_date TEXT,
+      pickup_date TEXT,
+      total DOUBLE PRECISION,
+      due_date TEXT,
+      load_status TEXT NOT NULL DEFAULT 'OK',
+      status_updated_at TEXT,
+      pas_review_days INTEGER,
+      pas_review_due_date TEXT,
+      usda_inspection_status TEXT,
+      usda_inspection_object_key TEXT,
+      usda_inspection_file_name TEXT,
+      usda_inspection_content_type TEXT,
+      usda_inspection_uploaded_at TEXT,
+      payment_status TEXT NOT NULL DEFAULT 'PENDIENTE',
+      invoice_number TEXT,
+      invoice_items TEXT,
+      original_invoice_items TEXT,
+      invoice_adjustments TEXT NOT NULL DEFAULT '[]',
+      bol_object_key TEXT,
+      bol_file_name TEXT,
+      bol_content_type TEXT,
+      bol_uploaded_at TEXT,
+      canceled_at TEXT,
+      canceled_by TEXT,
+      cancellation_reason TEXT,
+      cancellation_detail TEXT,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS business_partners (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      partner_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      paca_number TEXT NOT NULL DEFAULT '',
+      tax_id TEXT NOT NULL,
+      blue_book_number TEXT NOT NULL,
+      duns_number TEXT NOT NULL,
+      street TEXT NOT NULL,
+      exterior_number TEXT NOT NULL,
+      interior_number TEXT,
+      state_code TEXT NOT NULL,
+      state_name TEXT NOT NULL,
+      city TEXT NOT NULL,
+      postal_code TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      contact_email TEXT NOT NULL,
+      contact_phone TEXT NOT NULL,
+      assigned_seller TEXT,
+      profit_percentage DOUBLE PRECISION NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS company_settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      legal_name TEXT NOT NULL DEFAULT 'NORWEST PRODUCE LLC',
+      street TEXT NOT NULL DEFAULT '710 LAUREL AVENUE',
+      city TEXT NOT NULL DEFAULT 'MCALLEN',
+      state TEXT NOT NULL DEFAULT 'TX',
+      postal_code TEXT NOT NULL DEFAULT '78501',
+      blue_book_number TEXT NOT NULL DEFAULT '',
+      paca_number TEXT NOT NULL DEFAULT '',
+      duns_number TEXT NOT NULL DEFAULT '',
+      tax_id TEXT NOT NULL DEFAULT '',
+      norwest_profit_percentage DOUBLE PRECISION NOT NULL DEFAULT 16,
+      updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_accounts (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      full_name TEXT NOT NULL,
+      alias TEXT NOT NULL,
+      email TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      permissions TEXT NOT NULL DEFAULT '[]',
+      profit_percentage DOUBLE PRECISION NOT NULL DEFAULT 0,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS inventory_org_product_idx ON inventory_lots (organization_code, product)`;
+  await sql`CREATE INDEX IF NOT EXISTS inventory_org_available_idx ON inventory_lots (organization_code, available_boxes)`;
+  await sql`CREATE INDEX IF NOT EXISTS cold_storage_org_name_idx ON cold_storages (organization_code, name)`;
+  await sql`CREATE INDEX IF NOT EXISTS products_org_name_idx ON products (organization_code, name)`;
+  await sql`CREATE INDEX IF NOT EXISTS sales_org_date_idx ON sales (organization_code, sale_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS sales_org_pickup_idx ON sales (organization_code, pickup_number)`;
+  await sql`CREATE INDEX IF NOT EXISTS partners_org_type_name_idx ON business_partners (organization_code, partner_type, name)`;
+  await sql`CREATE INDEX IF NOT EXISTS partners_org_tax_id_idx ON business_partners (organization_code, tax_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS users_org_alias_idx ON user_accounts (organization_code, alias)`;
+  await sql`CREATE INDEX IF NOT EXISTS users_org_email_idx ON user_accounts (organization_code, email)`;
+}
+
+export async function getDb() {
+  const connectionString = databaseUrl();
+  if (!connectionString) {
+    throw new Error("Vercel Postgres/Neon no está conectado. Agrega DATABASE_URL al proyecto para guardar información real.");
   }
 
-  return drizzle(database, { schema });
+  if (!queryClient || !database) {
+    queryClient = neon(connectionString);
+    database = drizzle(queryClient, { schema });
+  }
+
+  initialization ??= initializeDatabase(queryClient);
+  await initialization;
+  return database;
 }
 
 export function getBucket() {
-  const bucket = globalThis.__NORWEST_RUNTIME_BINDINGS__?.BUCKET;
-  if (!bucket) throw new Error("Cloudflare R2 binding `BUCKET` is unavailable.");
-  return bucket;
+  const cloudflareBucket = globalThis.__NORWEST_RUNTIME_BINDINGS__?.BUCKET;
+  if (cloudflareBucket) return cloudflareBucket;
+
+  const hasBlobCredentials = process.env.BLOB_READ_WRITE_TOKEN || (process.env.VERCEL_OIDC_TOKEN && process.env.BLOB_STORE_ID);
+  if (!hasBlobCredentials) {
+    throw new Error("Vercel Blob no está conectado. Agrega BLOB_READ_WRITE_TOKEN o BLOB_STORE_ID para guardar archivos adjuntos.");
+  }
+
+  return {
+    async put(key: string, value: BodyInit, options?: { httpMetadata?: { contentType?: string } }) {
+      await putBlob(key, value as Parameters<typeof putBlob>[1], {
+        access: "private",
+        allowOverwrite: true,
+        contentType: options?.httpMetadata?.contentType,
+      });
+    },
+    async get(key: string) {
+      const blob = await getBlob(key, { access: "private", useCache: false });
+      if (!blob || blob.statusCode !== 200) return null;
+      return {
+        body: blob.stream,
+        httpMetadata: { contentType: blob.blob.contentType },
+      };
+    },
+    async delete(key: string) {
+      await deleteBlob(key).catch(() => undefined);
+    },
+  };
 }

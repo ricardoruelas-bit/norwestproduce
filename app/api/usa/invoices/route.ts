@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     const items = JSON.parse(rawItems) as unknown;
     if (!validItems(items)) return Response.json({ error: "Revisa productos, cantidades y precios de la factura." }, { status: 400 });
 
-    const db = getDb();
+    const db = await getDb();
     const [existing] = await db.select().from(sales).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).limit(1);
     if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
     if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede facturarse." }, { status: 409 });
@@ -102,7 +102,8 @@ export async function GET(request: Request) {
   try {
     const saleId = Number(new URL(request.url).searchParams.get("saleId"));
     if (!Number.isInteger(saleId) || saleId <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
-    const [sale] = await getDb().select({ key: sales.bolObjectKey, name: sales.bolFileName, type: sales.bolContentType })
+    const db = await getDb();
+    const [sale] = await db.select({ key: sales.bolObjectKey, name: sales.bolFileName, type: sales.bolContentType })
       .from(sales).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).limit(1);
     if (!sale?.key) return Response.json({ error: "Esta factura no tiene un BOL adjunto." }, { status: 404 });
     const object = await getBucket().get(sale.key);

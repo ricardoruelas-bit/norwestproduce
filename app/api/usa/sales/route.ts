@@ -29,7 +29,8 @@ function localDateKey(date = new Date()) {
 
 export async function GET() {
   try {
-    const rows = await getDb()
+    const db = await getDb();
+    const rows = await db
       .select()
       .from(sales)
       .where(eq(sales.organizationCode, "USA"))
@@ -42,7 +43,7 @@ export async function GET() {
 
 export async function DELETE() {
   try {
-    const db = getDb();
+    const db = await getDb();
     const existingSales = await db
       .select({ id: sales.id, inventoryLotId: sales.inventoryLotId, operationType: sales.operationType, boxes: sales.boxes })
       .from(sales)
@@ -66,6 +67,7 @@ export async function DELETE() {
 
 export async function POST(request: Request) {
   try {
+    const db = await getDb();
     const payload = (await request.json()) as Partial<NewSale> & { items?: InvoiceItem[] };
     if (!payload.saleDate || !payload.customer?.trim() || !payload.warehouse?.trim() || !payload.pickupNumber?.trim() || !payload.product?.trim()) {
       return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
@@ -93,7 +95,7 @@ export async function POST(request: Request) {
       if (!Number.isInteger(inventoryLotId) || inventoryLotId <= 0) {
         return Response.json({ error: "Selecciona una partida disponible del inventario." }, { status: 400 });
       }
-      const [lot] = await getDb().select().from(inventoryLots).where(and(
+      const [lot] = await db.select().from(inventoryLots).where(and(
         eq(inventoryLots.id, inventoryLotId),
         eq(inventoryLots.organizationCode, "USA"),
         gte(inventoryLots.availableBoxes, boxes),
@@ -103,7 +105,7 @@ export async function POST(request: Request) {
     }
     const profit = directItems.length ? directItems.reduce((sum, item) => sum + (item.unitPrice - item.purchasePrice) * item.quantity, 0) : total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
     const primary = directItems[0];
-    const [created] = await getDb().insert(sales).values({
+    const [created] = await db.insert(sales).values({
       organizationCode: "USA",
       operationType,
       supplier: payload.supplier?.trim() || null,
@@ -132,7 +134,7 @@ export async function POST(request: Request) {
       invoiceItems: directItems.length ? JSON.stringify(directItems) : null,
     }).returning();
     if (inventoryLotId) {
-      await getDb().update(inventoryLots)
+      await db.update(inventoryLots)
         .set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${boxes}` })
         .where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, boxes)));
     }
@@ -148,7 +150,7 @@ export async function PATCH(request: Request) {
     const id = Number(payload.id);
     if (!Number.isInteger(id) || id <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
     if (payload.cancelSale === true) {
-      const db = getDb();
+      const db = await getDb();
       const canceledBy = typeof payload.canceledBy === "string" ? payload.canceledBy.trim().toUpperCase() : "";
       const cancellationReason = typeof payload.cancellationReason === "string" ? payload.cancellationReason.trim() : "";
       const allowedCustomerReasons = new Set(["Sin Razón", "Compró en otro lado", "Consiguió mejor precio", "No consiguió camión", "Canceló su cliente", "No le gustó la calidad"]);
@@ -170,7 +172,7 @@ export async function PATCH(request: Request) {
       return Response.json({ sale });
     }
     if (payload.editSale === true) {
-      const db = getDb();
+      const db = await getDb();
       const [existing] = await db.select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
       if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
       if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede editarse." }, { status: 409 });
@@ -259,7 +261,8 @@ export async function PATCH(request: Request) {
       const items = payload.items as InvoiceItem[];
       const validItems = items.length > 1 && items.length <= 25 && items.every((item) => typeof item.product === "string" && item.product.trim() && Number.isFinite(Number(item.quantity)) && Number(item.quantity) > 0 && Number.isFinite(Number(item.unitPrice)) && Number(item.unitPrice) >= 0);
       if (!validItems) return Response.json({ error: "Revisa los productos, bultos/cajas y precios de la carga." }, { status: 400 });
-      const [existing] = await getDb().select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
+      const db = await getDb();
+      const [existing] = await db.select().from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
       if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
       if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede modificarse." }, { status: 409 });
       if (existing.invoiceNumber) return Response.json({ error: "La factura ya fue emitida. Usa Crear ajuste para conservar el historial." }, { status: 409 });
@@ -268,12 +271,13 @@ export async function PATCH(request: Request) {
       const total = normalized.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
       const itemCostsKnown = normalized.every((item) => item.purchasePrice != null);
       const profit = itemCostsKnown ? total - normalized.reduce((sum, item) => sum + Number(item.purchasePrice) * item.quantity, 0) : existing.purchasePrice == null ? null : total - existing.purchasePrice * boxes;
-      const [sale] = await getDb().update(sales).set({ invoiceItems: JSON.stringify(normalized), boxes, salePrice: null, total, profit, product: `${normalized[0].product} + ${normalized.length - 1} partida(s)`, presentation: null, size: null, label: null })
+      const [sale] = await db.update(sales).set({ invoiceItems: JSON.stringify(normalized), boxes, salePrice: null, total, profit, product: `${normalized[0].product} + ${normalized.length - 1} partida(s)`, presentation: null, size: null, label: null })
         .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).returning();
       return Response.json({ sale });
     }
     if (typeof payload.loadStatus === "string") {
-      const [existing] = await getDb().select({ canceledAt: sales.canceledAt, invoiceNumber: sales.invoiceNumber }).from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
+      const db = await getDb();
+      const [existing] = await db.select({ canceledAt: sales.canceledAt, invoiceNumber: sales.invoiceNumber }).from(sales).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"))).limit(1);
       if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
       if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede modificarse." }, { status: 409 });
       if (existing.invoiceNumber) return Response.json({ error: "El estatus de una venta facturada ya no puede modificarse." }, { status: 409 });
@@ -288,7 +292,7 @@ export async function PATCH(request: Request) {
         const requestedStart = typeof payload.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(payload.startDate) ? payload.startDate : localDateKey();
         const start = new Date(`${requestedStart}T00:00:00Z`);
         start.setUTCDate(start.getUTCDate() + pasReviewDays);
-        const [sale] = await getDb().update(sales).set({
+        const [sale] = await db.update(sales).set({
           loadStatus,
           statusUpdatedAt: now,
           pasReviewDays,
@@ -297,7 +301,7 @@ export async function PATCH(request: Request) {
         if (!sale) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
         return Response.json({ sale });
       }
-      const [sale] = await getDb().update(sales).set({
+      const [sale] = await db.update(sales).set({
         loadStatus,
         statusUpdatedAt: now,
         pasReviewDays: null,
@@ -316,7 +320,8 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
     }
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
-    const [sale] = await getDb().update(sales).set({ pickupDate, dueDate })
+    const db = await getDb();
+    const [sale] = await db.update(sales).set({ pickupDate, dueDate })
       .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.canceledAt))).returning();
     if (!sale) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
     return Response.json({ sale });

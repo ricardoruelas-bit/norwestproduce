@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     if (!notes) return Response.json({ error: "Describe brevemente la razón del ajuste." }, { status: 400 });
     if (!validItems(payload.items)) return Response.json({ error: "Revisa los productos, cantidades y precios del ajuste." }, { status: 400 });
 
-    const db = getDb();
+    const db = await getDb();
     const [existing] = await db.select().from(sales).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).limit(1);
     if (!existing?.invoiceNumber) return Response.json({ error: "La venta todavía no tiene una factura emitida." }, { status: 409 });
 

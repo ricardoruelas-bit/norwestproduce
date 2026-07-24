@@ -13,7 +13,8 @@ function clean(value: unknown) {
 
 export async function GET() {
   try {
-    const partners = await getDb().select().from(businessPartners)
+    const db = await getDb();
+    const partners = await db.select().from(businessPartners)
       .where(eq(businessPartners.organizationCode, "USA"))
       .orderBy(asc(businessPartners.partnerType), asc(businessPartners.name));
     return Response.json({ partners });
@@ -58,15 +59,11 @@ export async function POST(request: Request) {
       assignedSeller: clean(payload.assignedSeller) || null,
       profitPercentage,
     };
-    const db = getDb();
+    const db = await getDb();
     if (payload.alsoOppositeType) {
       const oppositeType = partnerType === "SUPPLIER" ? "CUSTOMER" : "SUPPLIER";
-      const [primaryResult, oppositeResult] = await db.batch([
-        db.insert(businessPartners).values(partnerValues).returning(),
-        db.insert(businessPartners).values({ ...partnerValues, partnerType: oppositeType }).returning(),
-      ]);
-      const created = primaryResult[0];
-      const opposite = oppositeResult[0];
+      const [created] = await db.insert(businessPartners).values(partnerValues).returning();
+      const [opposite] = await db.insert(businessPartners).values({ ...partnerValues, partnerType: oppositeType }).returning();
       return Response.json({ partner: created, partners: [created, opposite] }, { status: 201 });
     }
     const [created] = await db.insert(businessPartners).values(partnerValues).returning();
@@ -91,7 +88,8 @@ export async function PATCH(request: Request) {
     if (partnerType === "CUSTOMER" && !clean(payload.assignedSeller)) return Response.json({ error: "Selecciona el vendedor de Norwest para el cliente." }, { status: 400 });
     const profitPercentage = Number(payload.profitPercentage ?? 0);
     if (!Number.isFinite(profitPercentage) || profitPercentage < 0 || profitPercentage > 100) return Response.json({ error: "El porcentaje de utilidad debe estar entre 0 y 100." }, { status: 400 });
-    const [updated] = await getDb().update(businessPartners).set({
+    const db = await getDb();
+    const [updated] = await db.update(businessPartners).set({
       partnerType,
       name: clean(payload.name),
       pacaNumber: clean(payload.pacaNumber),

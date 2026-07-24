@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const inspection = formData.get("inspection");
     if (!Number.isInteger(saleId) || saleId <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
 
-    const db = getDb();
+    const db = await getDb();
     const [existing] = await db.select().from(sales).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).limit(1);
     if (!existing) return Response.json({ error: "No se encontró la venta." }, { status: 404 });
 
@@ -66,7 +66,8 @@ export async function GET(request: Request) {
   try {
     const saleId = Number(new URL(request.url).searchParams.get("saleId"));
     if (!Number.isInteger(saleId) || saleId <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });
-    const [sale] = await getDb().select({
+    const db = await getDb();
+    const [sale] = await db.select({
       key: sales.usdaInspectionObjectKey,
       name: sales.usdaInspectionFileName,
       type: sales.usdaInspectionContentType,

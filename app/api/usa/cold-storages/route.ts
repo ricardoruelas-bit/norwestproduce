@@ -8,7 +8,8 @@ function clean(value: unknown) {
 
 export async function GET() {
   try {
-    const rows = await getDb().select().from(coldStorages)
+    const db = await getDb();
+    const rows = await db.select().from(coldStorages)
       .where(eq(coldStorages.organizationCode, "USA"))
       .orderBy(asc(coldStorages.name));
     return Response.json({ coldStorages: rows });
@@ -26,7 +27,8 @@ export async function POST(request: Request) {
     if (!name || !address || phone.length !== 10) {
       return Response.json({ error: "Completa nombre, dirección y teléfono de 10 dígitos." }, { status: 400 });
     }
-    const [coldStorage] = await getDb().insert(coldStorages).values({ organizationCode: "USA", name, address, phone }).returning();
+    const db = await getDb();
+    const [coldStorage] = await db.insert(coldStorages).values({ organizationCode: "USA", name, address, phone }).returning();
     return Response.json({ coldStorage }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No fue posible guardar el cold storage." }, { status: 500 });
@@ -43,7 +45,8 @@ export async function PATCH(request: Request) {
     if (!Number.isInteger(id) || id <= 0 || !name || !address || phone.length !== 10) {
       return Response.json({ error: "Completa nombre, dirección y teléfono de 10 dígitos." }, { status: 400 });
     }
-    const [coldStorage] = await getDb().update(coldStorages)
+    const db = await getDb();
+    const [coldStorage] = await db.update(coldStorages)
       .set({ name, address, phone })
       .where(and(eq(coldStorages.id, id), eq(coldStorages.organizationCode, "USA")))
       .returning();
