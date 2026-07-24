@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, Fragment, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceAdjustment, InvoiceItem, PartnerType, Product, Sale, UserAccount } from "../../lib/types";
 
@@ -154,6 +155,7 @@ const defaultCostCurrencies: Record<CostKey, Currency> = {
 type PartnerTarget = "saleSupplier" | "saleCustomer" | "inventorySupplier" | null;
 
 export default function UsaDashboard({ initialSales }: { initialSales: Sale[] }) {
+  const router = useRouter();
   const [salesRows, setSalesRows] = useState<Sale[]>(initialSales);
   const [inventory, setInventory] = useState<InventoryLot[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
@@ -368,6 +370,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
     } catch (error) {
       setUserSaveState(error instanceof Error ? error.message : "No se pudo guardar el usuario.");
     }
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    router.push("/");
   }
 
   async function openCatalogs() {
@@ -1249,7 +1256,11 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
           <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => { setSection("collections"); void loadPartners(); }}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
         </nav>
-        <div className="sidebar-bottom"><div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div><Link href="/empresas">⇄ Cambiar empresa</Link></div>
+        <div className="sidebar-bottom">
+          <div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div>
+          <Link href="/empresas">⇄ Cambiar empresa</Link>
+          <button type="button" className="logout-button" onClick={() => void logout()}>Cerrar sesión</button>
+        </div>
       </aside>
 
       {section === "dashboard" && <section className="erp-content">
