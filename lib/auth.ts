@@ -2,13 +2,14 @@ import type { userAccounts } from "../db/schema";
 
 export const ALL_USER_PERMISSIONS = ["sales_view", "sales_edit", "inventory", "invoicing", "collections", "catalogs", "reports", "settings", "users"] as const;
 
+// Credentials can come from environment variables; the values below preserve the initial owner account.
 export const DEFAULT_ADMIN_USER = {
   id: 1,
   organizationCode: "USA",
-  fullName: "Ricardo Ruelas",
+  fullName: process.env.ADMIN_FULL_NAME ?? "Ricardo Ruelas",
   alias: "admin",
-  email: "ricardoruelas@gmail.com",
-  passwordHash: "pbkdf2-sha256$100000$oIaZOIWMdOdqF+mUjja3sg==$z/hFZbImLVFa1crshSJv/ugDQXgQDzJ0QoFdzdd/SQc=",
+  email: (process.env.ADMIN_EMAIL ?? "ricardoruelas@gmail.com").toLowerCase(),
+  passwordHash: process.env.ADMIN_PASSWORD_HASH ?? "pbkdf2-sha256$100000$oIaZOIWMdOdqF+mUjja3sg==$z/hFZbImLVFa1crshSJv/ugDQXgQDzJ0QoFdzdd/SQc=",
   permissions: JSON.stringify(ALL_USER_PERMISSIONS),
   profitPercentage: 0,
   active: true,

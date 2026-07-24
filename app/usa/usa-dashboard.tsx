@@ -154,7 +154,7 @@ const defaultCostCurrencies: Record<CostKey, Currency> = {
 };
 type PartnerTarget = "saleSupplier" | "saleCustomer" | "inventorySupplier" | null;
 
-export default function UsaDashboard({ initialSales }: { initialSales: Sale[] }) {
+export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sale[] }) {
   const router = useRouter();
   const [salesRows, setSalesRows] = useState<Sale[]>(initialSales);
   const [inventory, setInventory] = useState<InventoryLot[]>([]);
@@ -1272,7 +1272,7 @@ export default function UsaDashboard({ initialSales }: { initialSales: Sale[] })
           <article className="metric-card accent-earth"><div className="metric-icon">↗</div><p>Utilidad de hoy</p><strong>{money.format(totals.todayProfit)}</strong><span>Acumulado del mes: <b>{money.format(totals.monthProfit)}</b></span></article>
         </section>
         <section className="sales-panel">
-          <div className="panel-heading"><div><h2>Registro de ventas</h2><p>Partidas importadas de “VENTAS NORWEST DIC 2025 - 2026”</p></div><span className="record-count">{filtered.length} {filtered.length === 1 ? "partida" : "partidas"}</span></div>
+          <div className="panel-heading"><div><h2>Registro de ventas</h2><p>Ventas registradas en la operación USA.</p></div><span className="record-count">{filtered.length} {filtered.length === 1 ? "partida" : "partidas"}</span></div>
           <div className="filters"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cliente, PO#, PU#, producto o factura" /></label>
             <details className="filter-multiselect"><summary>{statusFilters.includes("TODOS") ? "TODOS LOS ESTATUS" : statusFilters.length === 1 ? statusFilters[0] : `${statusFilters.length} ESTATUS`}</summary><div className="filter-options">{["TODOS", ...LOAD_STATUS_OPTIONS, "SIN FACTURA", "CANCELADAS"].map((option) => <label key={option}><input type="checkbox" checked={statusFilters.includes(option)} onChange={() => toggleFilter(option, "TODOS", statusFilters, setStatusFilters)} /><span>{option === "TODOS" ? "Todos los estatus" : option}</span></label>)}</div></details>
             <details className="filter-multiselect"><summary>{operationFilters.includes("TODAS") ? "TODAS LAS OPERACIONES" : operationFilters.length === 1 ? (operationFilters[0] === "DIRECT_RESALE" ? "COMPRA Y REVENTA" : "INVENTARIO IMPORTADO") : `${operationFilters.length} OPERACIONES`}</summary><div className="filter-options">{[["TODAS", "Todas las operaciones"], ["DIRECT_RESALE", "Compra y reventa"], ["IMPORTED_INVENTORY", "Inventario importado"]].map(([value, label]) => <label key={value}><input type="checkbox" checked={operationFilters.includes(value)} onChange={() => toggleFilter(value, "TODAS", operationFilters, setOperationFilters)} /><span>{label}</span></label>)}</div></details>

@@ -1,53 +1,17 @@
 import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { inventoryLots, sales } from "../../../../db/schema";
-import referenceSales from "../../../../lib/reference-sales.json";
 import type { InvoiceItem, NewSale } from "../../../../lib/types";
 
 const LOAD_STATUSES = new Set(["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"]);
-
-async function seedReferenceData() {
-  const db = getDb();
-  const existing = await db.select({ id: sales.id }).from(sales).where(eq(sales.organizationCode, "USA")).limit(1);
-  if (existing.length) return;
-
-  const seedRows = referenceSales.map((row) => ({
-      organizationCode: "USA",
-      operationType: "DIRECT_RESALE",
-      saleDate: row.saleDate,
-      customer: row.customer,
-      sellerName: null,
-      purchaseOrder: row.purchaseOrder,
-      warehouse: row.warehouse,
-      pickupNumber: row.pickupNumber,
-      boxes: row.boxes,
-      product: row.product,
-      presentation: null,
-      size: row.size,
-      label: row.label,
-      purchasePrice: row.purchasePrice,
-      salePrice: row.salePrice,
-      profit: row.profit,
-      shipDate: row.shipDate,
-      pickupDate: row.pickupDate,
-      total: row.total,
-      dueDate: row.dueDate,
-      loadStatus: row.loadStatus ?? "OK",
-      paymentStatus: row.paymentStatus ?? "PENDIENTE",
-      invoiceNumber: row.invoiceNumber,
-    }));
-  for (let index = 0; index < seedRows.length; index += 4) {
-    await db.insert(sales).values(seedRows.slice(index, index + 4));
-  }
-}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "No fue posible completar la operación.";
 }
 
-function currentDateInMazatlan() {
+function currentDateInMcAllen() {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Mazatlan",
+    timeZone: "America/Chicago",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -65,13 +29,36 @@ function localDateKey(date = new Date()) {
 
 export async function GET() {
   try {
-    await seedReferenceData();
     const rows = await getDb()
       .select()
       .from(sales)
       .where(eq(sales.organizationCode, "USA"))
       .orderBy(desc(sales.saleDate), desc(sales.id));
     return Response.json({ sales: rows });
+  } catch (error) {
+    return Response.json({ error: errorMessage(error) }, { status: 500 });
+  }
+}
+
+export async function DELETE() {
+  try {
+    const db = getDb();
+    const existingSales = await db
+      .select({ id: sales.id, inventoryLotId: sales.inventoryLotId, operationType: sales.operationType, boxes: sales.boxes })
+      .from(sales)
+      .where(eq(sales.organizationCode, "USA"));
+
+    for (const row of existingSales) {
+      if (row.operationType === "IMPORTED_INVENTORY" && row.inventoryLotId) {
+        await db
+          .update(inventoryLots)
+          .set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${row.boxes}` })
+          .where(and(eq(inventoryLots.id, row.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+      }
+    }
+
+    await db.delete(sales).where(eq(sales.organizationCode, "USA"));
+    return Response.json({ deletedCount: existingSales.length });
   } catch (error) {
     return Response.json({ error: errorMessage(error) }, { status: 500 });
   }
@@ -84,7 +71,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
     }
     const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
-    if (pickupDate && pickupDate < currentDateInMazatlan()) {
+    if (pickupDate && pickupDate < currentDateInMcAllen()) {
       return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
     }
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
@@ -199,7 +186,7 @@ export async function PATCH(request: Request) {
         return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
       }
       const pickupDate = text(payload.pickupDate) || null;
-      if (pickupDate && pickupDate < currentDateInMazatlan()) {
+      if (pickupDate && pickupDate < currentDateInMcAllen()) {
         return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
       }
       const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
@@ -325,7 +312,7 @@ export async function PATCH(request: Request) {
       return Response.json({ sale });
     }
     const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
-    if (pickupDate && pickupDate < currentDateInMazatlan()) {
+    if (pickupDate && pickupDate < currentDateInMcAllen()) {
       return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
     }
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
