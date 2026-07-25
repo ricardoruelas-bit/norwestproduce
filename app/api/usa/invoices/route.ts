@@ -93,7 +93,13 @@ export async function POST(request: Request) {
     }).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).returning();
     return Response.json({ sale: updated }, { status: 201 });
   } catch (error) {
-    if (uploadedKey) await getBucket().delete(uploadedKey).catch(() => undefined);
+    if (uploadedKey) {
+      try {
+        await getBucket().delete(uploadedKey).catch(() => undefined);
+      } catch {
+        // Preserve the original invoice error so the client always receives JSON.
+      }
+    }
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo generar la factura." }, { status: 500 });
   }
 }

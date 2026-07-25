@@ -34,6 +34,7 @@ export const inventoryLots = pgTable(
     costCurrencies: text("cost_currencies").notNull().default("{}"),
     exchangeRate: doublePrecision("exchange_rate"),
     totalImportCost: doublePrecision("total_import_cost"),
+    receivedConfirmedAt: text("received_confirmed_at"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
   },
   (table) => [

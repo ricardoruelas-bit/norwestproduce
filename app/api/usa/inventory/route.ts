@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { inventoryLots } from "../../../../db/schema";
 
@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const db = await getDb();
     const lots = await db.select().from(inventoryLots).where(includeAll
       ? eq(inventoryLots.organizationCode, "USA")
-      : and(eq(inventoryLots.organizationCode, "USA"), gt(inventoryLots.availableBoxes, 0)))
+      : and(eq(inventoryLots.organizationCode, "USA"), gt(inventoryLots.availableBoxes, 0), isNotNull(inventoryLots.receivedConfirmedAt)))
       .orderBy(desc(inventoryLots.receivedDate), asc(inventoryLots.product));
     return Response.json({ lots });
   } catch (error) {
@@ -21,18 +21,40 @@ function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function inventoryItemsFromPayload(payload: Record<string, unknown>) {
+  const rawItems = Array.isArray(payload.items) ? payload.items : [{
+    product: payload.product,
+    presentation: payload.presentation,
+    size: payload.size,
+    label: payload.label,
+    totalBoxes: payload.totalBoxes,
+    boxesPerPallet: payload.boxesPerPallet,
+    purchasePrice: payload.purchasePrice,
+  }];
+  return rawItems.map((item) => {
+    const row = item as Record<string, unknown>;
+    return {
+      product: clean(row.product),
+      presentation: clean(row.presentation),
+      size: clean(row.size),
+      label: clean(row.label),
+      totalBoxes: Number(row.totalBoxes),
+      boxesPerPallet: row.boxesPerPallet === "" || row.boxesPerPallet == null ? null : Number(row.boxesPerPallet),
+      purchasePrice: row.purchasePrice === "" || row.purchasePrice == null ? NaN : Number(row.purchasePrice),
+    };
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
-    const totalBoxes = Number(payload.totalBoxes);
-    const boxesPerPallet = payload.boxesPerPallet === "" || payload.boxesPerPallet == null ? null : Number(payload.boxesPerPallet);
-    const palletsPerLoad = payload.palletsPerLoad === "" || payload.palletsPerLoad == null ? null : Number(payload.palletsPerLoad);
+    const items = inventoryItemsFromPayload(payload);
+    const totalBoxes = items.reduce((sum, item) => sum + (Number.isFinite(item.totalBoxes) ? item.totalBoxes : 0), 0);
     const exchangeRate = payload.exchangeRate === "" || payload.exchangeRate == null ? null : Number(payload.exchangeRate);
     const rawCurrencies = payload.costCurrencies && typeof payload.costCurrencies === "object" ? payload.costCurrencies as Record<string, unknown> : {};
     const currency = (key: string) => rawCurrencies[key] === "MXN" ? "MXN" : "USD";
     const toUsd = (value: number, selectedCurrency: string) => selectedCurrency === "MXN" ? value / (exchangeRate || 0) : value;
     const amount = (key: string) => payload[key] === "" || payload[key] == null ? 0 : Number(payload[key]);
-    const purchasePrice = amount("purchasePrice");
     const freightCost = amount("freightCost");
     const mexicoCustomsCost = amount("mexicoCustomsCost");
     const usCustomsCost = amount("usCustomsCost");
@@ -47,59 +69,65 @@ export async function POST(request: Request) {
       : [];
     const attachments = Array.isArray(payload.attachments) ? payload.attachments.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
     const costAttachments = payload.costAttachments && typeof payload.costAttachments === "object" ? payload.costAttachments as Record<string, unknown> : {};
-    if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !clean(payload.product) || !Number.isInteger(totalBoxes) || totalBoxes <= 0) {
-      return Response.json({ error: "Completa fecha de entrada, bodega, producto y cajas recibidas." }, { status: 400 });
+    if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !items.length || items.some((item) => !item.product || !Number.isInteger(item.totalBoxes) || item.totalBoxes <= 0)) {
+      return Response.json({ error: "Completa fecha de entrada, bodega, productos y cajas recibidas." }, { status: 400 });
     }
-    const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
-    if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes válidos en los costos de importación." }, { status: 400 });
+    const values = [freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...items.map((item) => item.purchasePrice), ...additionalExpenses.map((item) => item.amount)];
+    if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes validos en los costos de importacion." }, { status: 400 });
     if (!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
-      return Response.json({ error: "Ingresa el tipo de cambio válido de esta importación para calcular los totales en USD y MXN." }, { status: 400 });
+      return Response.json({ error: "Ingresa el tipo de cambio valido de esta importacion para calcular los totales en USD y MXN." }, { status: 400 });
     }
-    if ((boxesPerPallet != null && (!Number.isInteger(boxesPerPallet) || boxesPerPallet <= 0)) || (palletsPerLoad != null && (!Number.isInteger(palletsPerLoad) || palletsPerLoad <= 0))) {
-      return Response.json({ error: "Cajas por pallet y pallets por carga deben ser números enteros mayores que cero." }, { status: 400 });
+    if (items.some((item) => item.boxesPerPallet != null && (!Number.isInteger(item.boxesPerPallet) || item.boxesPerPallet <= 0))) {
+      return Response.json({ error: "Cajas por pallet debe ser un numero entero mayor que cero." }, { status: 400 });
     }
-    const totalImportCost = toUsd(purchasePrice, currency("purchasePrice")) * totalBoxes
-      + toUsd(freightCost, currency("freightCost"))
+    const purchaseTotal = items.reduce((sum, item) => sum + item.purchasePrice * item.totalBoxes, 0);
+    const fixedImportCost = toUsd(freightCost, currency("freightCost"))
       + toUsd(mexicoCustomsCost, currency("mexicoCustomsCost"))
       + toUsd(usCustomsCost, currency("usCustomsCost"))
       + toUsd(overweightCost, currency("overweightCost"))
       + toUsd(redLightCost, currency("redLightCost"))
       + toUsd(coldStorageCost, currency("coldStorageCost"))
       + additionalExpenses.reduce((sum, item) => sum + toUsd(item.amount, item.currency), 0);
-    const unitCost = totalImportCost / totalBoxes;
+    const totalImportCost = purchaseTotal + fixedImportCost;
+    const fixedCostPerBox = totalBoxes ? fixedImportCost / totalBoxes : 0;
+    const sharedCurrencies = JSON.stringify(Object.fromEntries(["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"].map((key) => [key, currency(key)])));
     const db = await getDb();
-    const [lot] = await db.insert(inventoryLots).values({
-      organizationCode: "USA",
-      receivedDate: clean(payload.receivedDate),
-      loadDate: clean(payload.loadDate) || null,
-      supplier: clean(payload.supplier) || null,
-      warehouse: clean(payload.warehouse),
-      pickupNumber: clean(payload.pickupNumber) || null,
-      product: clean(payload.product),
-      presentation: clean(payload.presentation) || null,
-      size: clean(payload.size) || null,
-      label: clean(payload.label) || null,
-      totalBoxes,
-      boxesPerPallet,
-      palletsPerLoad,
-      availableBoxes: totalBoxes,
-      unitCost,
-      purchasePrice,
-      freightCost,
-      mexicoCustomsCost,
-      usCustomsCost,
-      overweightCost,
-      redLightCost,
-      coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
-      coldStorageCost,
-      additionalExpenses: JSON.stringify(additionalExpenses),
-      attachments: JSON.stringify(attachments),
-      costAttachments: JSON.stringify(costAttachments),
-      costCurrencies: JSON.stringify(Object.fromEntries(["purchasePrice", "freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"].map((key) => [key, currency(key)]))),
-      exchangeRate,
-      totalImportCost,
-    }).returning();
-    return Response.json({ lot }, { status: 201 });
+    const insertedLots = await db.insert(inventoryLots).values(items.map((item) => {
+      const itemTotalImportCost = item.purchasePrice * item.totalBoxes + fixedCostPerBox * item.totalBoxes;
+      return {
+        organizationCode: "USA",
+        receivedDate: clean(payload.receivedDate),
+        loadDate: clean(payload.loadDate) || null,
+        supplier: clean(payload.supplier) || null,
+        warehouse: clean(payload.warehouse),
+        pickupNumber: clean(payload.pickupNumber) || null,
+        product: item.product,
+        presentation: item.presentation || null,
+        size: item.size || null,
+        label: item.label || null,
+        totalBoxes: item.totalBoxes,
+        boxesPerPallet: item.boxesPerPallet,
+        palletsPerLoad: null,
+        availableBoxes: item.totalBoxes,
+        unitCost: item.purchasePrice + fixedCostPerBox,
+        purchasePrice: item.purchasePrice,
+        freightCost,
+        mexicoCustomsCost,
+        usCustomsCost,
+        overweightCost,
+        redLightCost,
+        coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
+        coldStorageCost,
+        additionalExpenses: JSON.stringify(additionalExpenses),
+        attachments: JSON.stringify(attachments),
+        costAttachments: JSON.stringify(costAttachments),
+        costCurrencies: sharedCurrencies,
+        exchangeRate,
+        totalImportCost: itemTotalImportCost,
+        receivedConfirmedAt: null,
+      };
+    })).returning();
+    return Response.json({ lot: insertedLots[0], lots: insertedLots, totalImportCost }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No fue posible registrar la entrada.";
     return Response.json({ error: message }, { status: 500 });
@@ -114,6 +142,11 @@ export async function PATCH(request: Request) {
     const db = await getDb();
     const [existing] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, id), eq(inventoryLots.organizationCode, "USA"))).limit(1);
     if (!existing) return Response.json({ error: "No se encontró la partida." }, { status: 404 });
+    if (payload.receive === true) {
+      const [lot] = await db.update(inventoryLots).set({ receivedConfirmedAt: new Date().toISOString() })
+        .where(and(eq(inventoryLots.id, id), eq(inventoryLots.organizationCode, "USA"))).returning();
+      return Response.json({ lot });
+    }
     if (existing.availableBoxes <= 0) return Response.json({ error: "Esta partida ya fue facturada por completo y no puede editarse." }, { status: 409 });
 
     const totalBoxes = Number(payload.totalBoxes);

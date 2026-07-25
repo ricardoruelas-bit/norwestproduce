@@ -19,6 +19,7 @@ type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
+type InventoryEntryItem = { product: string; presentation: string; size: string; label: string; totalBoxes: string; boxesPerPallet: string; purchasePrice: string };
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
@@ -155,7 +156,7 @@ function adjustmentsFor(sale: Sale): InvoiceAdjustment[] {
 const blankSale = {
   saleDate: localDateKey(), operationType: "DIRECT_RESALE" as Operation, supplier: "", inventoryLotId: "", customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
   boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", sellerName: "", shipDate: "", pickupDate: "",
-  shipTo: "FOB McAllen",
+  shipTo: "",
 };
 
 const blankPartner = {
@@ -171,6 +172,7 @@ const blankInventory = {
   purchasePrice: "", freightCost: "", mexicoCustomsCost: "", usCustomsCost: "", overweightCost: "", redLightCost: "", coldStorage: "", coldStorageCost: "",
   attachments: [] as string[], costAttachments: {} as Record<CostKey, string[]>,
 };
+const blankInventoryItem: InventoryEntryItem = { product: "", presentation: "", size: "", label: "", totalBoxes: "", boxesPerPallet: "", purchasePrice: "" };
 
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "", boxesPerPallet: "" };
 const blankColdStorage = { name: "", address: "", phone: "", stateCode: "", stateName: "", city: "", street: "", exteriorNumber: "", interiorNumber: "", postalCode: "" };
@@ -217,6 +219,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [inventoryModal, setInventoryModal] = useState(false);
   const [editingInventoryId, setEditingInventoryId] = useState<number | null>(null);
   const [inventoryForm, setInventoryForm] = useState(blankInventory);
+  const [inventoryItems, setInventoryItems] = useState<InventoryEntryItem[]>([{ ...blankInventoryItem }]);
   const [inventorySaveState, setInventorySaveState] = useState("");
   const [invoiceSale, setInvoiceSale] = useState<Sale | null>(null);
   const [invoiceStep, setInvoiceStep] = useState<"closed" | "pickup" | "bol" | "items">("closed");
@@ -541,10 +544,14 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     event.preventDefault();
     setInventorySaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/inventory", { method: editingInventoryId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...inventoryForm, id: editingInventoryId, additionalExpenses, costCurrencies }) });
+      const normalizedItems = inventoryItems
+        .filter((item) => item.product || item.totalBoxes || item.boxesPerPallet || item.purchasePrice)
+        .map((item) => ({ ...item, totalBoxes: Number(item.totalBoxes), boxesPerPallet: item.boxesPerPallet, purchasePrice: Number(item.purchasePrice) }));
+      const totalBoxes = normalizedItems.reduce((sum, item) => sum + (Number(item.totalBoxes) || 0), 0);
+      const response = await fetch("/api/usa/inventory", { method: editingInventoryId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...inventoryForm, id: editingInventoryId, items: normalizedItems, totalBoxes, product: normalizedItems[0]?.product || "", presentation: normalizedItems[0]?.presentation || "", size: normalizedItems[0]?.size || "", label: normalizedItems[0]?.label || "", boxesPerPallet: normalizedItems[0]?.boxesPerPallet || "", purchasePrice: normalizedItems[0]?.purchasePrice ?? "", additionalExpenses, costCurrencies }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo registrar la entrada.");
-      setInventory((current) => editingInventoryId ? current.map((lot) => lot.id === data.lot.id ? data.lot : lot) : [data.lot, ...current]);
+      setInventory((current) => editingInventoryId ? current.map((lot) => lot.id === data.lot.id ? data.lot : lot) : [...(Array.isArray(data.lots) ? data.lots : [data.lot]), ...current]);
       setExpenseConcepts((current) => Array.from(new Map([...current, ...additionalExpenses.map((item) => item.concept.trim()).filter(Boolean)].map((item) => [item.toLocaleLowerCase(), item])).values()).sort((a, b) => a.localeCompare(b)));
       setInventoryModal(false);
       setEditingInventoryId(null);
@@ -557,6 +564,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   function openInventoryEntry() {
     setEditingInventoryId(null);
     setInventoryForm({ ...blankInventory, receivedDate: localDateKey() });
+    setInventoryItems([{ ...blankInventoryItem }]);
     setAdditionalExpenses([]);
     setCostCurrencies(defaultCostCurrencies);
     setTotalBoxesManual(false);
@@ -609,6 +617,15 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       attachments: parseJsonArray(lot.attachments),
       costAttachments: parseCostAttachmentMap(lot.costAttachments),
     });
+    setInventoryItems([{
+      product: lot.product,
+      presentation: lot.presentation || "",
+      size: lot.size || "",
+      label: lot.label || "",
+      totalBoxes: String(lot.totalBoxes),
+      boxesPerPallet: lot.boxesPerPallet == null ? "" : String(lot.boxesPerPallet),
+      purchasePrice: lot.purchasePrice == null ? "" : String(lot.purchasePrice),
+    }]);
     setAdditionalExpenses(parsedExpenses);
     setCostCurrencies(parsedCurrencies);
     setTotalBoxesManual(true);
@@ -616,6 +633,17 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setInventorySaveState("");
     setInventoryModal(true);
     void Promise.all([loadCaptureCatalogs(), loadExpenseConcepts()]);
+  }
+
+  async function receiveInventoryEntry(lot: InventoryLot) {
+    try {
+      const response = await fetch("/api/usa/inventory", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: lot.id, receive: true }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo confirmar la recepción.");
+      setInventory((current) => current.map((item) => item.id === lot.id ? data.lot : item));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo confirmar la recepción.");
+    }
   }
 
   async function openColdStorageForm(target: "inventory" | "sale" | "catalog" = "inventory", coldStorage?: ColdStorage) {
@@ -665,7 +693,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       if (!response.ok) throw new Error(data.error || "No se pudo guardar el cold storage.");
       setColdStorages((current) => (editingColdStorageId ? current.map((item) => item.id === editingColdStorageId ? data.coldStorage : item) : [...current, data.coldStorage]).sort((a, b) => a.name.localeCompare(b.name)));
       if (!editingColdStorageId && coldStorageTarget === "sale") {
-        setForm((current) => ({ ...current, warehouse: data.coldStorage.name }));
+        setForm((current) => ({ ...current, warehouse: data.coldStorage.name, shipTo: warehouseShipTo(data.coldStorage) }));
       } else if (!editingColdStorageId && coldStorageTarget === "inventory") {
         setInventoryForm((current) => ({ ...current, coldStorage: data.coldStorage.name, warehouse: data.coldStorage.name }));
       }
@@ -683,14 +711,19 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setInventoryForm((current) => ({ ...current, coldStorage: selected?.name || "", warehouse: selected?.name || "" }));
   }
 
+  function warehouseShipTo(warehouse: ColdStorage | undefined) {
+    return warehouse ? [warehouse.city, warehouse.stateCode].filter(Boolean).join(", ") || warehouse.name : "";
+  }
+
   function chooseSaleWarehouse(value: string) {
     if (value === "__new__") return openColdStorageForm("sale");
     if (value.startsWith("legacy:")) {
-      setForm((current) => ({ ...current, warehouse: value.slice("legacy:".length) }));
+      const legacyName = value.slice("legacy:".length);
+      setForm((current) => ({ ...current, warehouse: legacyName, shipTo: legacyName }));
       return;
     }
     const selected = coldStorages.find((item) => String(item.id) === value);
-    setForm((current) => ({ ...current, warehouse: selected?.name || "" }));
+    setForm((current) => ({ ...current, warehouse: selected?.name || "", shipTo: warehouseShipTo(selected) }));
   }
 
   function updatePalletCalculation(field: "boxesPerPallet" | "palletsPerLoad", value: string) {
@@ -941,12 +974,20 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       payload.set("bol", bolFile);
       payload.set("items", JSON.stringify(invoiceItems));
       const response = await fetch("/api/usa/invoices", { method: "POST", body: payload });
-      const data = await response.json();
+      const rawResponse = await response.text();
+      let data: { sale?: Sale; error?: string } = {};
+      try {
+        data = rawResponse ? JSON.parse(rawResponse) : {};
+      } catch {
+        throw new Error("El servidor no devolvió una respuesta válida. Revisa la conexión de archivos BOL en Vercel.");
+      }
       if (!response.ok) throw new Error(data.error || "No se pudo generar la factura.");
-      setSalesRows((current) => current.map((sale) => sale.id === data.sale.id ? data.sale : sale));
+      if (!data.sale) throw new Error("La factura se procesó, pero el servidor no devolvió la venta actualizada.");
+      const updatedSale = data.sale;
+      setSalesRows((current) => current.map((sale) => sale.id === updatedSale.id ? updatedSale : sale));
       setInvoiceSale(null);
       closeInvoicePreparation();
-      openInvoicePreview(data.sale);
+      openInvoicePreview(updatedSale);
     } catch (error) {
       setInvoiceSaveState(error instanceof Error ? error.message : "No se pudo generar la factura.");
     }
@@ -1031,7 +1072,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       salePrice: sale.salePrice == null ? "" : String(sale.salePrice),
       sellerName: sale.sellerName || "",
       shipDate: "",
-      shipTo: sale.shipTo || "FOB McAllen",
+      shipTo: sale.shipTo || "",
       pickupDate: sale.pickupDate || "",
     });
     setSaveState("");
@@ -1068,10 +1109,12 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       setProducts((current) => [...current, data.product].sort((a, b) => a.name.localeCompare(b.name)));
       if (productTarget === "sale") {
         if (form.operationType === "DIRECT_RESALE" && productTargetLine != null) setSaleLineItems((current) => current.map((item, index) => index === productTargetLine ? { ...item, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" } : item));
-        else if (form.operationType === "DIRECT_RESALE") setSaleLineItems((current) => [...current, { product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "", quantity: 1, purchasePrice: 0, unitPrice: 0 }]);
+        else if (form.operationType === "DIRECT_RESALE") setSaleLineItems((current) => [...current, { product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "", quantity: "" as unknown as number, purchasePrice: "" as unknown as number, unitPrice: "" as unknown as number }]);
         else setForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "" }));
       }
-      if (productTarget === "inventory") setInventoryForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "", boxesPerPallet: data.product.boxesPerPallet ? String(data.product.boxesPerPallet) : current.boxesPerPallet }));
+      if (productTarget === "inventory" && productTargetLine != null) {
+        setInventoryItems((current) => current.map((item, index) => index === productTargetLine ? { ...item, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "", boxesPerPallet: data.product.boxesPerPallet ? String(data.product.boxesPerPallet) : item.boxesPerPallet } : item));
+      } else if (productTarget === "inventory") setInventoryForm((current) => ({ ...current, product: data.product.name, presentation: data.product.presentation || "", size: data.product.size || "", label: data.product.label || "", boxesPerPallet: data.product.boxesPerPallet ? String(data.product.boxesPerPallet) : current.boxesPerPallet }));
       if (productVariantBase) setExpandedCatalogProducts((current) => current.includes(data.product.name.trim().toLocaleLowerCase()) ? current : [...current, data.product.name.trim().toLocaleLowerCase()]);
       setProductModal(false);
       setProductTarget(null);
@@ -1091,6 +1134,32 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     else setInventoryForm((current) => ({ ...current, product: product.name, presentation: product.presentation || "", size: product.size || "", label: product.label || "", boxesPerPallet: product.boxesPerPallet ? String(product.boxesPerPallet) : current.boxesPerPallet }));
   }
 
+  function updateInventoryItem(index: number, changes: Partial<InventoryEntryItem>) {
+    setInventoryItems((current) => {
+      const next = current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item);
+      const totalBoxes = next.reduce((sum, item) => sum + (Number(item.totalBoxes) || 0), 0);
+      setInventoryForm((currentForm) => ({ ...currentForm, totalBoxes: totalBoxes ? String(totalBoxes) : "" }));
+      return next;
+    });
+  }
+
+  function chooseInventoryItemProduct(index: number, value: string) {
+    if (value === "__new__") return openProductForm("inventory", index);
+    const product = products.find((item) => String(item.id) === value);
+    if (!product) return updateInventoryItem(index, { product: "", presentation: "", size: "", label: "", boxesPerPallet: "" });
+    updateInventoryItem(index, {
+      product: product.name,
+      presentation: product.presentation || "",
+      size: product.size || "",
+      label: product.label || "",
+      boxesPerPallet: product.boxesPerPallet ? String(product.boxesPerPallet) : "",
+    });
+  }
+
+  function addInventoryItem() {
+    setInventoryItems((current) => [...current, { ...blankInventoryItem }]);
+  }
+
   function addSaleLineItem(productId?: string) {
     const product = products.find((item) => String(item.id) === productId);
     setSaleLineItems((current) => [...current, {
@@ -1098,9 +1167,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       presentation: product?.presentation || "",
       size: product?.size || "",
       label: product?.label || "",
-      quantity: 1,
-      purchasePrice: 0,
-      unitPrice: 0,
+      quantity: "" as unknown as number,
+      purchasePrice: "" as unknown as number,
+      unitPrice: "" as unknown as number,
     }]);
   }
 
@@ -1339,17 +1408,17 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   }, [salesRows, statementCustomer]);
 
   const inventoryCostSummary = useMemo(() => {
-    const boxes = Number(inventoryForm.totalBoxes) || 0;
+    const boxes = inventoryItems.reduce((sum, item) => sum + (Number(item.totalBoxes) || 0), 0);
     const rate = Number(inventoryForm.exchangeRate) || 0;
     const usd = (value: string, currency: Currency) => currency === "MXN" ? (rate ? (Number(value) || 0) / rate : 0) : Number(value) || 0;
-    const purchase = usd(inventoryForm.purchasePrice, costCurrencies.purchasePrice) * boxes;
+    const purchase = inventoryItems.reduce((sum, item) => sum + (Number(item.purchasePrice) || 0) * (Number(item.totalBoxes) || 0), 0);
     const fixed = (["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"] as CostKey[])
       .reduce((sum, key) => sum + usd(inventoryForm[key], costCurrencies[key]), 0);
     const extras = additionalExpenses.reduce((sum, item) => sum + usd(item.amount, item.currency), 0);
     const totalUsd = purchase + fixed + extras;
     const totalMxn = rate ? totalUsd * rate : 0;
     return { totalUsd, totalMxn, unitUsd: boxes ? totalUsd / boxes : 0, unitMxn: boxes ? totalMxn / boxes : 0 };
-  }, [inventoryForm, additionalExpenses, costCurrencies]);
+  }, [inventoryForm, inventoryItems, additionalExpenses, costCurrencies]);
 
   const saleDraftSummary = useMemo(() => {
     const total = form.operationType === "DIRECT_RESALE"
@@ -1405,7 +1474,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   }
 
   function costInput(label: string, key: CostKey) {
-    return <div className="cost-field"><span className="cost-field-label">{label}</span><span className="money-entry money-entry-with-clip"><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={inventoryForm[key]} onChange={(e) => setInventoryForm({ ...inventoryForm, [key]: e.target.value })} /></span><select aria-label={`Moneda de ${label}`} value={costCurrencies[key]} onChange={(e) => setCostCurrencies({ ...costCurrencies, [key]: e.target.value as Currency })}><option value="USD">USD</option><option value="MXN">MXN</option></select><label className="clip-upload" title={`Adjuntar documentos de ${label}`}><input type="file" multiple onChange={(event) => addCostAttachments(key, event.target.files)} /><span>📎</span></label></span>{Boolean(inventoryForm.costAttachments[key]?.length) && <small className="attachment-list">{inventoryForm.costAttachments[key].join(", ")}</small>}</div>;
+    return <div className="cost-field"><span className="cost-field-label">{label}</span><span className="money-entry money-entry-with-clip"><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={inventoryForm[key]} onChange={(e) => setInventoryForm({ ...inventoryForm, [key]: e.target.value })} /></span><select aria-label={`Moneda de ${label}`} value={costCurrencies[key]} onChange={(e) => setCostCurrencies({ ...costCurrencies, [key]: e.target.value as Currency })}><option value="USD">USD</option><option value="MXN">MXN</option></select><label className="clip-upload" title={`Adjuntar documentos de ${label}`}><input type="file" multiple onChange={(event) => addCostAttachments(key, event.target.files)} /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 12.8l5.9-5.9a3.1 3.1 0 014.4 4.4l-7.7 7.7a5 5 0 01-7.1-7.1l8.2-8.2a6.8 6.8 0 019.6 9.6l-8.2 8.2" /></svg></label></span>{Boolean(inventoryForm.costAttachments[key]?.length) && <small className="attachment-list">{inventoryForm.costAttachments[key].join(", ")}</small>}</div>;
   }
 
   return (
@@ -1438,13 +1507,13 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
             <details className="filter-multiselect"><summary>{statusFilters.includes("TODOS") ? "TODOS LOS ESTATUS" : statusFilters.length === 1 ? statusFilters[0] : `${statusFilters.length} ESTATUS`}</summary><div className="filter-options">{["TODOS", ...LOAD_STATUS_OPTIONS, "SIN FACTURA", "CANCELADAS"].map((option) => <label key={option}><input type="checkbox" checked={statusFilters.includes(option)} onChange={() => toggleFilter(option, "TODOS", statusFilters, setStatusFilters)} /><span>{option === "TODOS" ? "Todos los estatus" : option}</span></label>)}</div></details>
             <details className="filter-multiselect"><summary>{operationFilters.includes("TODAS") ? "TODAS LAS OPERACIONES" : operationFilters.length === 1 ? (operationFilters[0] === "DIRECT_RESALE" ? "COMPRA Y REVENTA" : "INVENTARIO IMPORTADO") : `${operationFilters.length} OPERACIONES`}</summary><div className="filter-options">{[["TODAS", "Todas las operaciones"], ["DIRECT_RESALE", "Compra y reventa"], ["IMPORTED_INVENTORY", "Inventario importado"]].map(([value, label]) => <label key={value}><input type="checkbox" checked={operationFilters.includes(value)} onChange={() => toggleFilter(value, "TODAS", operationFilters, setOperationFilters)} /><span>{label}</span></label>)}</div></details>
           </div>
-          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Editar</th></tr></thead>
+          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Edit</th></tr></thead>
             <tbody>{filtered.map((row, index) => { return <tr className={saleRowClass(row)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
               <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} min={localDateKey()} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{row.pickupDate === localDateKey() && <small>Pickup hoy</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.invoiceNumber ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>{money.format(invoiceItemsFor(row)[0]?.unitPrice ?? row.salePrice ?? 0)}</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
-              <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select disabled={Boolean(row.invoiceNumber)} title={row.invoiceNumber ? "El estatus queda bloqueado al facturar" : undefined} className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" disabled={Boolean(row.invoiceNumber)} className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" title={invoiceEligibilityMessage(row) || "Facturar venta"} onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <><button type="button" className="edit-button" onClick={() => openEditSale(row)}>Editar</button><button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Eliminar</button></> : <span className="muted">—</span>}</div></td>
+              <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select disabled={Boolean(row.invoiceNumber)} title={row.invoiceNumber ? "El estatus queda bloqueado al facturar" : undefined} className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" disabled={Boolean(row.invoiceNumber)} className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" title={invoiceEligibilityMessage(row) || "Facturar venta"} onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <><button type="button" className="edit-button" onClick={() => openEditSale(row)}>Edit</button><button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Eliminar</button></> : <span className="muted">—</span>}</div></td>
             </tr>; })}</tbody></table></div>
         </section>
       </section>}
@@ -1480,12 +1549,12 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         </section> : partnerTypeFilter === "WAREHOUSE" ? <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>Bodegas</h2><p>Catálogo de bodegas de destino de la operación USA</p></div><button className="primary-button" onClick={() => openColdStorageForm("catalog")}>＋ Alta de bodega</button></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>Dirección</th><th>Teléfono</th><th></th></tr></thead>
-            <tbody>{coldStorages.map((coldStorage) => <tr key={coldStorage.id}><td><strong>{coldStorage.name}</strong></td><td>{coldStorage.address}</td><td>{formatPhone(coldStorage.phone)}</td><td><button type="button" className="edit-button" onClick={() => openColdStorageForm("catalog", coldStorage)}>Editar</button></td></tr>)}</tbody></table></div>
+            <tbody>{coldStorages.map((coldStorage) => <tr key={coldStorage.id}><td><strong>{coldStorage.name}</strong></td><td>{coldStorage.address}</td><td>{formatPhone(coldStorage.phone)}</td><td><button type="button" className="edit-button" onClick={() => openColdStorageForm("catalog", coldStorage)}>Edit</button></td></tr>)}</tbody></table></div>
           {coldStorages.length === 0 && <div className="catalog-empty"><strong>Aún no hay bodegas registradas</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
         </section> : <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>{partnerTypeFilter === "SUPPLIER" ? "Proveedores" : "Clientes"}</h2><p>Catálogo exclusivo de la operación USA</p></div><button className="primary-button" onClick={() => void openPartnerForm(partnerTypeFilter)}>＋ Alta de {partnerTypeFilter === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>PACA #</th><th>TAX ID #</th><th>Blue Book #</th><th>DUNS & Bradstreet #</th><th>Direcci??n</th>{partnerTypeFilter === "CUSTOMER" && <th>Comprador</th>}<th>{partnerTypeFilter === "SUPPLIER" ? "Contacto para pagos" : "Contacto para cobros"}</th><th></th></tr></thead>
-            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.pacaNumber || "Pendiente"}</td><td>{partner.taxId || "Pendiente"}</td><td>{partner.blueBookNumber || "Pendiente"}</td><td>{partner.dunsNumber || "Pendiente"}</td><td><strong>{[partner.street, partner.exteriorNumber && `#${partner.exteriorNumber}`, partner.interiorNumber && `Int. ${partner.interiorNumber}`].filter(Boolean).join(" ") || "Pendiente"}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td>{partnerTypeFilter === "CUSTOMER" && <td><strong>{partner.buyerName || "Pendiente"}</strong><small>{partner.buyerEmail || ""}{partner.buyerOfficePhone ? ` ?? ${formatPhone(partner.buyerOfficePhone)}` : ""}</small></td>}<td><strong>{partner.contactName}</strong><small>{partner.contactEmail} ?? {formatPhone(partner.contactPhone)}</small></td><td><button type="button" className="edit-button" onClick={() => void editPartner(partner)}>Editar</button></td></tr>)}</tbody></table></div>
+            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.pacaNumber || "Pendiente"}</td><td>{partner.taxId || "Pendiente"}</td><td>{partner.blueBookNumber || "Pendiente"}</td><td>{partner.dunsNumber || "Pendiente"}</td><td><strong>{[partner.street, partner.exteriorNumber && `#${partner.exteriorNumber}`, partner.interiorNumber && `Int. ${partner.interiorNumber}`].filter(Boolean).join(" ") || "Pendiente"}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td>{partnerTypeFilter === "CUSTOMER" && <td><strong>{partner.buyerName || "Pendiente"}</strong><small>{partner.buyerEmail || ""}{partner.buyerOfficePhone ? ` ?? ${formatPhone(partner.buyerOfficePhone)}` : ""}</small></td>}<td><strong>{partner.contactName}</strong><small>{partner.contactEmail} ?? {formatPhone(partner.contactPhone)}</small></td><td><button type="button" className="edit-button" onClick={() => void editPartner(partner)}>Edit</button></td></tr>)}</tbody></table></div>
           {partners.filter((partner) => partner.partnerType === partnerTypeFilter).length === 0 && <div className="catalog-empty"><strong>Aún no hay {partnerTypeFilter === "SUPPLIER" ? "proveedores" : "clientes"} registrados</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
         </section>}
       </section>}
@@ -1493,7 +1562,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       {section === "inventory" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Inventario importado</h1></div><button className="primary-button" onClick={openInventoryEntry}>＋ Registrar entrada</button></header>
         <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Existencias por partida</h2><p>Aquí se da de alta el producto importado que entra a inventario.</p></div><span className="record-count">{inventory.length} partidas</span></div>
-          {inventoryLoading ? <div className="catalog-empty">Consultando inventario…</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de carga</th><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Factura #</th><th>Cold storage</th><th className="numeric">Cajas/pallet</th><th className="numeric">Pallets</th><th className="numeric">Bultos/cajas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total de importación</th><th className="numeric">Costo real por caja</th><th></th></tr></thead><tbody>{inventory.map((lot) => <tr key={lot.id}><td>{formatDate(lot.loadDate || null)}</td><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "—"}</small></td><td>{lot.supplier || "—"}</td><td>{lot.pickupNumber || "—"}</td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{lot.boxesPerPallet == null ? "—" : number.format(lot.boxesPerPallet)}</td><td className="numeric">{lot.palletsPerLoad == null ? "—" : number.format(lot.palletsPerLoad)}</td><td className="numeric">{number.format(lot.totalBoxes)}</td><td className="numeric strong-number">{number.format(lot.availableBoxes)}</td><td className="numeric dual-currency-cell">{lot.totalImportCost == null ? "—" : <><strong>{money.format(lot.totalImportCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(lot.totalImportCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td className="numeric dual-currency-cell">{lot.unitCost == null ? "—" : <><strong>{money.format(lot.unitCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(lot.unitCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td><button type="button" className="edit-button" disabled={lot.availableBoxes <= 0} title={lot.availableBoxes <= 0 ? "Partida facturada por completo" : "Editar partida"} onClick={() => openEditInventoryEntry(lot)}>Editar</button></td></tr>)}</tbody></table></div>}
+          {inventoryLoading ? <div className="catalog-empty">Consultando inventario…</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de carga</th><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Factura #</th><th>Cold storage</th><th className="numeric">Cajas/pallet</th><th className="numeric">Bultos/cajas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total de importación</th><th className="numeric">Costo real por caja</th><th></th></tr></thead><tbody>{inventory.map((lot) => <tr key={lot.id}><td>{formatDate(lot.loadDate || null)}</td><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "—"}</small></td><td>{lot.supplier || "—"}</td><td>{lot.pickupNumber || "—"}</td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{lot.boxesPerPallet == null ? "—" : number.format(lot.boxesPerPallet)}</td><td className="numeric">{number.format(lot.totalBoxes)}</td><td className="numeric strong-number">{number.format(lot.availableBoxes)}</td><td className="numeric dual-currency-cell">{lot.totalImportCost == null ? "—" : <><strong>{money.format(lot.totalImportCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(lot.totalImportCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td className="numeric dual-currency-cell">{lot.unitCost == null ? "—" : <><strong>{money.format(lot.unitCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(lot.unitCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td><div className="row-actions">{lot.receivedConfirmedAt ? <span className="status-tag ok">Received</span> : <button type="button" className="edit-button" disabled={lot.availableBoxes <= 0} title={lot.availableBoxes <= 0 ? "Partida facturada por completo" : "Confirmar recepción"} onClick={() => void receiveInventoryEntry(lot)}>Received</button>}<button type="button" className="edit-button" disabled={lot.availableBoxes <= 0} title={lot.availableBoxes <= 0 ? "Partida facturada por completo" : "Edit partida"} onClick={() => openEditInventoryEntry(lot)}>Edit</button></div></td></tr>)}</tbody></table></div>}
           {!inventoryLoading && inventory.length === 0 && <div className="catalog-empty"><strong>Aún no hay entradas de inventario</strong><span>Usa “Registrar entrada” para dar de alta el primer producto importado.</span></div>}
         </section>
       </section>}
@@ -1540,7 +1609,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           </form>
           <section className="sales-panel settings-card">
             <div className="panel-heading"><div><h2>Usuarios y vendedores</h2><p>Alias, correo y permisos por usuario.</p></div><button type="button" className="primary-button" onClick={() => openUserForm()}>＋ Agregar usuario</button></div>
-            <div className="table-wrap settings-users-table"><table><thead><tr><th>Nombre</th><th>Alias</th><th>Correo</th><th>Estatus</th><th>Permisos</th><th></th></tr></thead><tbody>{users.map((user) => { let permissionCount = 0; try { permissionCount = (JSON.parse(user.permissions) as string[]).length; } catch { permissionCount = 0; } return <tr key={user.id}><td><strong>{user.fullName}</strong></td><td>{user.alias}</td><td>{user.email}</td><td><span className={`status-tag ${user.active ? "ok" : "adjusted"}`}>{user.active ? "Activo" : "Inactivo"}</span></td><td>{permissionCount} autorizaciones</td><td><button type="button" className="edit-button" onClick={() => openUserForm(user)}>Editar</button></td></tr>; })}</tbody></table></div>
+            <div className="table-wrap settings-users-table"><table><thead><tr><th>Nombre</th><th>Alias</th><th>Correo</th><th>Estatus</th><th>Permisos</th><th></th></tr></thead><tbody>{users.map((user) => { let permissionCount = 0; try { permissionCount = (JSON.parse(user.permissions) as string[]).length; } catch { permissionCount = 0; } return <tr key={user.id}><td><strong>{user.fullName}</strong></td><td>{user.alias}</td><td>{user.email}</td><td><span className={`status-tag ${user.active ? "ok" : "adjusted"}`}>{user.active ? "Activo" : "Inactivo"}</span></td><td>{permissionCount} autorizaciones</td><td><button type="button" className="edit-button" onClick={() => openUserForm(user)}>Edit</button></td></tr>; })}</tbody></table></div>
             {!users.length && <div className="catalog-empty"><strong>Aún no hay usuarios internos</strong><span>Agrega al primer usuario o vendedor para asignarlo a los clientes.</span></div>}
           </section>
         </div>
@@ -1624,20 +1693,20 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
               <div className="sale-lines">{saleLineItems.map((item, index) => { const productNames = Array.from(new Set(products.map((product) => product.name))).sort((a, b) => a.localeCompare(b)); return <article key={`${index}-${item.product}-${item.presentation}-${item.size}-${item.label}`}>
                 <label><span>Producto</span><select required value={item.product} onChange={(event) => changeSaleLineProduct(index, event.target.value)}><option value="">Selecciona producto</option>{productNames.map((name) => <option key={name} value={name}>{name}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label>
                 {(["presentation", "size", "label"] as const).map((field) => { const labels = { presentation: "Presentación", size: "Tamaño", label: "Etiqueta" }; return <label key={field}><span>{labels[field]}</span><select value={item[field]} disabled={!item.product} onChange={(event) => changeSaleLineCatalogValue(index, field, event.target.value)}><option value="">Sin {labels[field].toLocaleLowerCase()}</option>{saleLineCatalogValues(item.product, field).map((value) => <option key={value} value={value}>{value}</option>)}<option value="__new__">＋ Agregar nuevo</option></select></label>; })}
-                <label><span>Bultos / cajas</span><input required min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateSaleLineItem(index, { quantity: Number(event.target.value) })} /></label>
-                <label><span>Precio compra</span>{moneyField(item.purchasePrice ?? 0, (value) => updateSaleLineItem(index, { purchasePrice: Number(value) }), true)}</label>
-                <label><span>Precio venta</span>{moneyField(item.unitPrice, (value) => updateSaleLineItem(index, { unitPrice: Number(value) }), true)}</label>
+                <label><span>Bultos / cajas</span><input required min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateSaleLineItem(index, { quantity: (event.target.value === "" ? "" : Number(event.target.value)) as unknown as number })} /></label>
+                <label><span>Precio compra</span>{moneyField(item.purchasePrice ?? "", (value) => updateSaleLineItem(index, { purchasePrice: (value === "" ? "" : Number(value)) as unknown as number }), true)}</label>
+                <label><span>Precio venta</span>{moneyField(item.unitPrice, (value) => updateSaleLineItem(index, { unitPrice: (value === "" ? "" : Number(value)) as unknown as number }), true)}</label>
                 <div className="sale-line-total"><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div>
                 <button type="button" className="sale-line-remove" aria-label={`Eliminar ${item.product}`} onClick={() => setSaleLineItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
               </article>; })}</div>
               {!saleLineItems.length && <div className="sale-lines-empty">Agrega el primer producto para continuar.</div>}
             </section>
           </> : <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Selecciona del inventario</h3><p>Solo aparecen partidas con cajas disponibles.</p></div></div>
-            {inventoryLoading ? <div className="inventory-empty">Consultando inventario…</div> : inventory.length === 0 ? <div className="inventory-empty"><strong>No hay inventario importado disponible</strong><span>Cuando se registren entradas de importación, aparecerán aquí para poder venderlas.</span></div> : <div className="inventory-list">{inventory.filter((lot) => lot.availableBoxes > 0 || lot.id === editingSale?.inventoryLotId).map((lot) => { const available = lot.availableBoxes + (editingSale?.inventoryLotId === lot.id ? editingSale.boxes : 0); return <button key={lot.id} type="button" className={`inventory-row ${form.inventoryLotId === String(lot.id) ? "selected" : ""}`} onClick={() => selectInventoryLot(lot)}><span className="inventory-radio"/><span className="inventory-lot-reference"><strong>Factura #{lot.pickupNumber || "S/R"}</strong><small>{inventoryAgeDays(lot)} días en bodega</small></span><span><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "Sin detalle"}</small></span><span><strong>{lot.warehouse}</strong><small>Recibido {formatDate(lot.receivedDate)}</small></span><span className="inventory-boxes"><strong>{number.format(available)}</strong><small>cajas disponibles</small></span></button>; })}</div>}
+            {inventoryLoading ? <div className="inventory-empty">Consultando inventario…</div> : inventory.length === 0 ? <div className="inventory-empty"><strong>No hay inventario importado disponible</strong><span>Cuando se registren entradas de importación, aparecerán aquí para poder venderlas.</span></div> : <div className="inventory-list">{inventory.filter((lot) => lot.availableBoxes > 0 || lot.id === editingSale?.inventoryLotId).map((lot) => { const available = lot.availableBoxes + (editingSale?.inventoryLotId === lot.id ? editingSale.boxes : 0); return <button key={lot.id} type="button" className={`inventory-row ${form.inventoryLotId === String(lot.id) ? "selected" : ""}`} onClick={() => selectInventoryLot(lot)}><span className="inventory-radio"/><span className="inventory-lot-reference"><strong>Factura #{lot.pickupNumber || "S/R"}</strong></span><span><strong>{inventoryAgeDays(lot)}</strong><small>días en inventario</small></span><span><strong>{lot.product}</strong><small>Producto</small></span><span><strong>{lot.size || "—"}</strong><small>Tamaño</small></span><span><strong>{lot.presentation || "—"}</strong><small>Presentación</small></span><span><strong>{lot.label || "—"}</strong><small>Etiqueta</small></span><span><strong>{lot.warehouse}</strong><small>Bodega</small></span><span className="inventory-boxes"><strong>{number.format(available)}</strong><small>cajas disponibles</small></span></button>; })}</div>}
           </section>}
 
           {(form.operationType === "DIRECT_RESALE" || selectedLot) && <section className="form-section sale-section"><div className="form-section-heading"><span>2</span><div><h3>Información de la venta</h3><p>Datos del cliente, entrega y precio de venta.</p></div></div>
-            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega de Pickup<select required value={selectedSaleWarehouse?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{coldStorages.map((item) => <option key={`catalog:${item.id}`} value={item.id}>{item.name}</option>)}{registeredSaleWarehouses.map((name) => <option key={`legacy:${name}`} value={`legacy:${name}`}>{name}</option>)}{form.warehouse && !selectedSaleWarehouse && !registeredSaleWarehouses.includes(form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}<option value="__new__">＋ Agregar bodega</option></select>{selectedSaleWarehouse && <small className="field-help">{selectedSaleWarehouse.address} · {formatPhone(selectedSaleWarehouse.phone)}</small>}</label>{form.operationType === "IMPORTED_INVENTORY" && <><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta{moneyField(form.salePrice, (value) => setForm({...form, salePrice:value}), true)}</label></>}<label>SHIP TO<input list="ship-to-options" value={form.shipTo} onChange={(e) => setForm({...form, shipTo:e.target.value})} placeholder="FOB McAllen" /><datalist id="ship-to-options"><option value="FOB McAllen" /><option value="FOB Nogales" /><option value="Delivered" /></datalist></label><label>D?a de pickup<input min={localDateKey()} type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /><small className="field-help">No puede ser anterior al día actual.</small></label></div>
+            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega de Pickup<select required value={selectedSaleWarehouse?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{coldStorages.map((item) => <option key={`catalog:${item.id}`} value={item.id}>{item.name}</option>)}{registeredSaleWarehouses.map((name) => <option key={`legacy:${name}`} value={`legacy:${name}`}>{name}</option>)}{form.warehouse && !selectedSaleWarehouse && !registeredSaleWarehouses.includes(form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}<option value="__new__">＋ Agregar bodega</option></select>{selectedSaleWarehouse && <small className="field-help">{selectedSaleWarehouse.address} · {formatPhone(selectedSaleWarehouse.phone)}</small>}</label>{form.operationType === "IMPORTED_INVENTORY" && <><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta{moneyField(form.salePrice, (value) => setForm({...form, salePrice:value}), true)}</label></>}<label>SHIP TO<input list="ship-to-options" value={form.shipTo} onChange={(e) => setForm({...form, shipTo:e.target.value})} placeholder="Ciudad, Estado o términos de venta" /><datalist id="ship-to-options"><option value="FOB McAllen" /><option value="FOB Nogales" /><option value="Delivered" /></datalist></label><label>Día de pickup<input min={localDateKey()} type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /><small className="field-help">No puede ser anterior al día actual.</small></label></div>
           </section>}
           <div className="form-total"><span>Total</span><strong>{money.format(saleDraftSummary.total)}</strong><small>Utilidad total: {money.format(saleDraftSummary.profit)}</small><small>Utilidad vendedor: {money.format(saleDraftSummary.sellerProfit)}</small></div>
           {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !selectedLot}>{editingSale ? "Guardar cambios" : "Guardar venta"}</button></div>
@@ -1647,10 +1716,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       {inventoryModal && <div className="modal-backdrop"><form className="sale-modal sale-modal-wide" onSubmit={saveInventoryEntry} onKeyDown={moveToNextField}>
         <div className="modal-heading"><div><p className="eyebrow">Inventario importado</p><h2>{editingInventoryId ? "Editar entrada" : "Registrar entrada"}</h2><p className="modal-intro">Esta partida quedará disponible para seleccionarla al registrar una venta de inventario.</p></div></div>
         <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Datos de la importación</h3></div></div><div className="form-grid">
-          <label>Fecha de carga<input type="date" value={inventoryForm.loadDate} onChange={(e) => setInventoryForm({...inventoryForm, loadDate:e.target.value})} /></label><label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<select value={inventoryForm.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "inventorySupplier") : setInventoryForm({...inventoryForm, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>Factura #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><label>Producto *<select required value={products.find((item) => item.name === inventoryForm.product && (item.presentation || "") === inventoryForm.presentation && (item.size || "") === inventoryForm.size)?.id || ""} onChange={(e) => chooseProduct(e.target.value, "inventory")}><option value="">Selecciona un producto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}<option value="__new__">＋ Agregar nuevo producto</option></select></label><label>Presentación<input value={inventoryForm.presentation} readOnly /></label><label>Tamaño<input value={inventoryForm.size} readOnly /></label><label>Etiqueta<input value={inventoryForm.label} readOnly /></label><label>Cajas por pallet<input name="boxesPerPallet" min="1" step="1" type="number" value={inventoryForm.boxesPerPallet} onChange={(e) => updatePalletCalculation("boxesPerPallet", e.target.value)} /></label><label>Pallets por carga<input name="palletsPerLoad" min="1" step="1" type="number" value={inventoryForm.palletsPerLoad} onChange={(e) => updatePalletCalculation("palletsPerLoad", e.target.value)} /></label><label>Total de bultos o cajas *<input name="totalBoxes" required min="1" step="1" type="number" value={inventoryForm.totalBoxes} onChange={(e) => { setTotalBoxesManual(true); setInventoryForm({...inventoryForm, totalBoxes:e.target.value}); }} /><small className="field-help">Se calcula automáticamente, pero puedes ajustarlo por pallets incompletos.</small></label><div className="span-2 document-inline-upload"><span>Documentos de la carga</span><label className="document-chip-button"><input type="file" multiple onChange={(event) => addInventoryAttachments(event.target.files)} />Seleccionar archivos</label>{inventoryForm.attachments.length > 0 && <small className="attachment-list">{inventoryForm.attachments.join(", ")}</small>}</div>
-        </div></section>
-        <section className="form-section cost-section"><div className="form-section-heading"><span>2</span><div><h3>Costos y gastos de importación</h3><p>El precio de compra es por bulto. Los demás importes son totales de la carga y se distribuyen entre todos los bultos o cajas.</p></div></div><div className="exchange-rate-row"><label>Tipo de cambio de esta transacción <span>1 USD =</span><input required min="0.0001" step="0.0001" type="number" value={inventoryForm.exchangeRate} onChange={(e) => setInventoryForm({...inventoryForm, exchangeRate:e.target.value})} /><b>MXN</b></label></div><div className="form-grid cost-grid">
-          {costInput("Precio de compra por bulto", "purchasePrice")}{costInput("Flete total", "freightCost")}{costInput("Aduana MX total", "mexicoCustomsCost")}{costInput("Aduana US total", "usCustomsCost")}{costInput("Sobrepeso total", "overweightCost")}{costInput("Semáforo rojo total", "redLightCost")}<label>Cold storage de destino *<select required value={selectedColdStorage?.id || ""} onChange={(e) => chooseColdStorage(e.target.value)}><option value="">Selecciona un cold storage</option>{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar nuevo cold storage</option></select>{selectedColdStorage && <small className="field-help">{selectedColdStorage.address} · {formatPhone(selectedColdStorage.phone)}</small>}</label>{costInput("Costo total de cold storage", "coldStorageCost")}
+          <label>Fecha de carga<input type="date" value={inventoryForm.loadDate} onChange={(e) => setInventoryForm({...inventoryForm, loadDate:e.target.value})} /></label><label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<select value={inventoryForm.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "inventorySupplier") : setInventoryForm({...inventoryForm, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>Factura #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><div className="span-all inventory-entry-items"><div className="inventory-entry-items-heading"><strong>Productos de la carga</strong><button type="button" className="add-expense-button" onClick={addInventoryItem}>+ Agregar producto</button></div>{inventoryItems.map((item, index) => <article key={index}><label><span>Producto</span><select required value={products.find((product) => product.name === item.product && (product.presentation || "") === item.presentation && (product.size || "") === item.size && (product.label || "") === item.label)?.id || ""} onChange={(event) => chooseInventoryItemProduct(index, event.target.value)}><option value="">Selecciona producto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}<option value="__new__">+ Agregar nuevo producto</option></select></label><label><span>Tamaño</span><input value={item.size} readOnly /></label><label><span>Presentación</span><input value={item.presentation} readOnly /></label><label><span>Etiqueta</span><input value={item.label} readOnly /></label><label><span>Cantidad cajas</span><input required min="1" step="1" type="number" value={item.totalBoxes} onChange={(event) => updateInventoryItem(index, { totalBoxes: event.target.value })} /></label><label><span>Cajas por pallet</span><input min="1" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateInventoryItem(index, { boxesPerPallet: event.target.value })} /></label><label><span>Precio compra</span>{moneyField(item.purchasePrice, (value) => updateInventoryItem(index, { purchasePrice: value }), true)}</label><button type="button" className="sale-line-remove" aria-label="Eliminar producto" disabled={inventoryItems.length === 1} onClick={() => setInventoryItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></article>)}</div><label>Total de bultos o cajas *<input name="totalBoxes" required readOnly value={inventoryForm.totalBoxes} /><small className="field-help">Se calcula con la suma de las cajas de los productos agregados.</small></label><div className="span-2 document-inline-upload"><span>Documentos de la carga</span><label className="document-chip-button"><input type="file" multiple onChange={(event) => addInventoryAttachments(event.target.files)} />Seleccionar archivos</label>{inventoryForm.attachments.length > 0 && <small className="attachment-list">{inventoryForm.attachments.join(", ")}</small>}</div></div></section>
+        <section className="form-section cost-section"><div className="form-section-heading"><span>2</span><div><h3>Costos y gastos de importación</h3><p>Los gastos son totales de la carga y se distribuyen entre todos los bultos o cajas.</p></div></div><div className="exchange-rate-row"><label>Tipo de cambio de esta transacción <span>1 USD =</span><input required min="0.0001" step="0.0001" type="number" value={inventoryForm.exchangeRate} onChange={(e) => setInventoryForm({...inventoryForm, exchangeRate:e.target.value})} /><b>MXN</b></label></div><div className="form-grid cost-grid">
+          {costInput("Flete total", "freightCost")}{costInput("Aduana MX total", "mexicoCustomsCost")}{costInput("Aduana US total", "usCustomsCost")}{costInput("Sobrepeso total", "overweightCost")}{costInput("Semáforo rojo total", "redLightCost")}<label>Cold storage de destino *<select required value={selectedColdStorage?.id || ""} onChange={(e) => chooseColdStorage(e.target.value)}><option value="">Selecciona un cold storage</option>{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar nuevo cold storage</option></select>{selectedColdStorage && <small className="field-help">{selectedColdStorage.address} · {formatPhone(selectedColdStorage.phone)}</small>}</label>{costInput("Costo total de cold storage", "coldStorageCost")}
         </div><div className="extra-expenses"><div className="extra-heading"><strong>Otros costos o gastos totales</strong><button type="button" className="add-expense-button" onClick={() => setAdditionalExpenses((current) => [...current, { concept: "", amount: "", currency: "USD" }])}>＋ Agregar gasto</button></div>{additionalExpenses.map((expense, index) => <div className="expense-row" key={index}><div className="expense-concept-field"><input aria-label="Concepto del gasto" placeholder="Concepto" autoComplete="off" value={expense.concept} onFocus={() => setActiveExpenseConcept(index)} onBlur={() => window.setTimeout(() => setActiveExpenseConcept((current) => current === index ? null : current), 120)} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept: e.target.value } : item))} />{activeExpenseConcept === index && expenseConcepts.length > 0 && <div className="expense-concept-menu">{expenseConcepts.filter((concept) => concept.toLocaleLowerCase().includes(expense.concept.toLocaleLowerCase())).map((concept) => <button type="button" key={concept} onMouseDown={(event) => event.preventDefault()} onClick={() => { setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept } : item)); setActiveExpenseConcept(null); }}>{concept}</button>)}</div>}</div><span className="dollar-input"><span>$</span><input aria-label="Importe total del gasto" placeholder="Importe total" min="0" step="0.01" type="number" value={expense.amount} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item))} /></span><select aria-label="Moneda del gasto" value={expense.currency} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: e.target.value as Currency } : item))}><option value="USD">USD</option><option value="MXN">MXN</option></select><button type="button" aria-label="Eliminar gasto" onClick={() => setAdditionalExpenses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>
         <div className="import-cost-summary"><span><small>Costo total de importación</small><strong>{money.format(inventoryCostSummary.totalUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.totalMxn)} MXN</b></span><span><small>Costo real por caja</small><strong>{money.format(inventoryCostSummary.unitUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.unitMxn)} MXN</b></span></div></section>
         {inventorySaveState && <p className="form-message">{inventorySaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setInventoryModal(false); setEditingInventoryId(null); }}>Cancelar</button><button type="submit" className="primary-button">{editingInventoryId ? "Guardar cambios" : "Registrar entrada"}</button></div>

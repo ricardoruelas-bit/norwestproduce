@@ -104,6 +104,7 @@ export type InventoryLot = {
   costCurrencies: string;
   exchangeRate: number | null;
   totalImportCost: number | null;
+  receivedConfirmedAt?: string | null;
 };
 
 export type ColdStorage = {
