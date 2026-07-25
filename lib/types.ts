@@ -51,7 +51,7 @@ export type Sale = {
 export type InvoiceAdjustment = {
   number: string;
   createdAt: string;
-  reason: "CAMBIO DE PRECIO" | "RECHAZO PARCIAL" | "PRODUCTO ELIMINADO" | "CARGA POR ERROR" | "OTRO";
+  reason: "CAMBIO DE PRECIO" | "CALIDAD" | "RECHAZO PARCIAL" | "PRODUCTO ELIMINADO" | "CARGA POR ERROR" | "OTRO";
   notes: string;
   previousItems: InvoiceItem[];
   adjustedItems: InvoiceItem[];

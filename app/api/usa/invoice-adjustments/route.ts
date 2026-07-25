@@ -3,7 +3,7 @@ import { getDb } from "../../../../db";
 import { sales } from "../../../../db/schema";
 import type { InvoiceAdjustment, InvoiceItem } from "../../../../lib/types";
 
-const REASONS = new Set(["CAMBIO DE PRECIO", "RECHAZO PARCIAL", "PRODUCTO ELIMINADO", "CARGA POR ERROR", "OTRO"]);
+const REASONS = new Set(["CAMBIO DE PRECIO", "CALIDAD", "RECHAZO PARCIAL", "PRODUCTO ELIMINADO", "CARGA POR ERROR", "OTRO"]);
 
 function parseItems(value: string | null): InvoiceItem[] {
   try {
