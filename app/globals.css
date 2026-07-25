@@ -195,6 +195,8 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .dual-currency-cell strong,.dual-currency-cell small { display:block; }.dual-currency-cell strong{font-size:10px}.dual-currency-cell small{margin-top:4px;font-size:9px}
 .cost-section { border-top:3px solid var(--earth); }
 .cost-grid { grid-template-columns:repeat(4,1fr); }
+.cost-field { display:flex; min-width:0; flex-direction:column; gap:6px; color:#60716d; font-size:10px; font-weight:750; }
+.cost-field-label { display:block; }
 .extra-expenses { margin-top:18px; padding-top:16px; border-top:1px dashed #cedbd7; }
 .extra-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#50645f; font-size:11px; }
 .add-expense-button { padding:7px 10px; border:1px solid rgba(0,127,113,.28); border-radius:8px; background:#f1f8f6; color:var(--green-dark); font-size:10px; font-weight:800; cursor:pointer; }
@@ -207,6 +209,16 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 .expense-concept-menu button { display:block; width:100%; padding:8px 9px; border:0; border-radius:6px; background:#fff; color:var(--ink); font-size:10px; text-align:left; }.expense-concept-menu button:hover{background:#edf7f4;color:var(--green-dark)}
 .money-entry { display:grid; grid-template-columns:minmax(0,1fr) 78px; gap:6px; }
 .money-entry input,.money-entry select { width:100%; }
+.money-entry-with-clip { grid-template-columns:minmax(0,1fr) 78px 38px; align-items:center; }
+.dollar-input { position:relative; display:block; width:100%; }
+.dollar-input>span { position:absolute; z-index:1; left:10px; top:50%; transform:translateY(-50%); color:#60736e; font-size:12px; font-weight:900; pointer-events:none; }
+.dollar-input>input { width:100%; padding-left:25px!important; }
+.clip-upload,.document-chip-button { display:grid; place-items:center; min-height:38px; border:1px solid #c8d9d4; border-radius:9px; background:#f8fbfa; color:var(--green-dark); cursor:pointer; }
+.clip-upload input,.document-chip-button input { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
+.clip-upload span { font-size:16px; line-height:1; }
+.attachment-list { display:block; margin-top:5px; color:#60736e; font-size:8px; font-weight:700; line-height:1.35; }
+.document-inline-upload { display:flex; flex-direction:column; gap:7px; color:#3d524d; font-size:10px; font-weight:850; }
+.document-chip-button { width:max-content; padding:0 12px; font-size:10px; font-weight:850; }
 .exchange-rate-row { display:flex; justify-content:flex-end; margin:-3px 0 16px; padding:12px 14px; border:1px solid #dbe7e3; border-radius:11px; background:#f4f8f7; }
 .exchange-rate-row label { display:flex; align-items:center; gap:8px; color:#50645f; font-size:10px; font-weight:800; }
 .exchange-rate-row input { width:112px; height:36px; padding:0 9px; border:1px solid #ccd9d5; border-radius:8px; background:#fff; font-size:12px; }

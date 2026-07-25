@@ -69,7 +69,8 @@ export async function POST(request: Request) {
   try {
     const db = await getDb();
     const payload = (await request.json()) as Partial<NewSale> & { items?: InvoiceItem[] };
-    if (!payload.saleDate || !payload.customer?.trim() || !payload.warehouse?.trim() || !payload.pickupNumber?.trim() || !payload.product?.trim()) {
+    const requestedOperationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
+    if (!payload.saleDate || !payload.customer?.trim() || !payload.warehouse?.trim() || !payload.pickupNumber?.trim() || (requestedOperationType === "DIRECT_RESALE" && !payload.product?.trim())) {
       return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
     }
     const pickupDate = typeof payload.pickupDate === "string" && payload.pickupDate ? payload.pickupDate : null;
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
     }
     const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
-    const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
+    const operationType = requestedOperationType;
     const directItems = operationType === "DIRECT_RESALE" && Array.isArray(payload.items) ? payload.items.map((item) => ({ product: String(item.product || "").trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "", quantity: Number(item.quantity), purchasePrice: Number(item.purchasePrice), unitPrice: Number(item.unitPrice) })) : [];
     if (operationType === "DIRECT_RESALE" && (!directItems.length || directItems.length > 25 || directItems.some((item) => !item.product || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.purchasePrice) || item.purchasePrice < 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0))) {
       return Response.json({ error: "Revisa productos, bultos/cajas, precio de compra y precio de venta." }, { status: 400 });
@@ -102,6 +103,10 @@ export async function POST(request: Request) {
       )).limit(1);
       if (!lot) return Response.json({ error: "La partida seleccionada ya no tiene suficientes cajas disponibles." }, { status: 409 });
       purchasePrice = lot.unitCost;
+      payload.product = payload.product?.trim() || lot.product;
+      payload.presentation = payload.presentation?.trim() || lot.presentation || "";
+      payload.size = payload.size?.trim() || lot.size || "";
+      payload.label = payload.label?.trim() || lot.label || "";
     }
     const profit = directItems.length ? directItems.reduce((sum, item) => sum + (item.unitPrice - item.purchasePrice) * item.quantity, 0) : total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
     const primary = directItems[0];
@@ -117,7 +122,7 @@ export async function POST(request: Request) {
       warehouse: payload.warehouse.trim(),
       pickupNumber: payload.pickupNumber.trim(),
       boxes,
-      product: directItems.length > 1 ? `${primary.product} + ${directItems.length - 1} partida(s)` : primary?.product || payload.product.trim(),
+      product: directItems.length > 1 ? `${primary.product} + ${directItems.length - 1} partida(s)` : primary?.product || (payload.product ?? "").trim(),
       presentation: directItems.length > 1 ? null : primary?.presentation || payload.presentation?.trim() || null,
       size: directItems.length > 1 ? null : primary?.size || payload.size?.trim() || null,
       label: directItems.length > 1 ? null : primary?.label || payload.label?.trim() || null,
@@ -125,6 +130,7 @@ export async function POST(request: Request) {
       salePrice: directItems.length > 1 ? null : primary?.unitPrice ?? (Number.isFinite(salePrice) ? salePrice : null),
       profit,
       shipDate: payload.shipDate || null,
+      shipTo: typeof payload.shipTo === "string" ? payload.shipTo.trim() || null : null,
       pickupDate,
       total,
       dueDate,
@@ -184,14 +190,14 @@ export async function PATCH(request: Request) {
       const warehouse = text(payload.warehouse);
       const pickupNumber = text(payload.pickupNumber);
       const product = text(payload.product);
-      if (!saleDate || !customer || !warehouse || !pickupNumber || !product) {
+      const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
+      if (!saleDate || !customer || !warehouse || !pickupNumber || (operationType === "DIRECT_RESALE" && !product)) {
         return Response.json({ error: "Completa fecha, cliente, bodega, PU# y producto." }, { status: 400 });
       }
       const pickupDate = text(payload.pickupDate) || null;
       if (pickupDate && pickupDate < currentDateInMcAllen()) {
         return Response.json({ error: "La fecha de pickup no puede ser anterior al día actual." }, { status: 400 });
       }
-      const operationType = payload.operationType === "IMPORTED_INVENTORY" ? "IMPORTED_INVENTORY" : "DIRECT_RESALE";
       const directItems = operationType === "DIRECT_RESALE" && Array.isArray(payload.items) ? (payload.items as InvoiceItem[]).map((item) => ({ product: String(item.product || "").trim(), presentation: item.presentation?.trim() || "", size: item.size?.trim() || "", label: item.label?.trim() || "", quantity: Number(item.quantity), purchasePrice: Number(item.purchasePrice), unitPrice: Number(item.unitPrice) })) : [];
       if (operationType === "DIRECT_RESALE" && (!directItems.length || directItems.length > 25 || directItems.some((item) => !item.product || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.purchasePrice) || item.purchasePrice < 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0))) {
         return Response.json({ error: "Revisa productos, bultos/cajas, precio de compra y precio de venta." }, { status: 400 });
@@ -216,6 +222,10 @@ export async function PATCH(request: Request) {
         const usableBoxes = lot.availableBoxes + (existing.inventoryLotId === inventoryLotId ? existing.boxes : 0);
         if (usableBoxes < boxes) return Response.json({ error: `La partida sólo tiene ${usableBoxes} cajas disponibles para esta venta.` }, { status: 409 });
         purchasePrice = lot.unitCost;
+        payload.product = product || lot.product;
+        payload.presentation = text(payload.presentation) || lot.presentation || "";
+        payload.size = text(payload.size) || lot.size || "";
+        payload.label = text(payload.label) || lot.label || "";
 
         if (existing.inventoryLotId === inventoryLotId) {
           await db.update(inventoryLots).set({ availableBoxes: usableBoxes - boxes }).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
@@ -249,6 +259,7 @@ export async function PATCH(request: Request) {
         salePrice: directItems.length > 1 ? null : primary?.unitPrice ?? salePrice,
         profit,
         shipDate: null,
+        shipTo: text(payload.shipTo) || null,
         pickupDate,
         total,
         dueDate,

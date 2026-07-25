@@ -20,6 +20,7 @@ export type Sale = {
   salePrice: number | null;
   profit: number | null;
   shipDate: string | null;
+  shipTo?: string | null;
   pickupDate: string | null;
   total: number | null;
   dueDate: string | null;
@@ -76,6 +77,7 @@ export type InventoryLot = {
   id: number;
   organizationCode: string;
   receivedDate: string;
+  loadDate?: string | null;
   supplier: string | null;
   warehouse: string;
   pickupNumber: string | null;
@@ -97,6 +99,8 @@ export type InventoryLot = {
   coldStorage: string | null;
   coldStorageCost: number;
   additionalExpenses: string;
+  attachments?: string;
+  costAttachments?: string;
   costCurrencies: string;
   exchangeRate: number | null;
   totalImportCost: number | null;
@@ -108,6 +112,13 @@ export type ColdStorage = {
   name: string;
   address: string;
   phone: string;
+  stateCode?: string;
+  stateName?: string;
+  city?: string;
+  street?: string;
+  exteriorNumber?: string;
+  interiorNumber?: string | null;
+  postalCode?: string;
 };
 
 export type Product = {
@@ -118,6 +129,7 @@ export type Product = {
   presentation: string | null;
   size: string | null;
   label: string | null;
+  boxesPerPallet?: number | null;
 };
 
 export type PartnerType = "SUPPLIER" | "CUSTOMER";
@@ -141,6 +153,11 @@ export type BusinessPartner = {
   contactName: string;
   contactEmail: string;
   contactPhone: string;
+  buyerName?: string;
+  buyerEmail?: string;
+  buyerOfficePhone?: string;
+  buyerOfficeExtension?: string;
+  buyerMobilePhone?: string;
   assignedSeller: string | null;
   profitPercentage: number;
   createdAt?: string;

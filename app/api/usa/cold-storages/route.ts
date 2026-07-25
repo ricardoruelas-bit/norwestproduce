@@ -6,6 +6,24 @@ function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizePayload(payload: Record<string, unknown>) {
+  const name = clean(payload.name);
+  const street = clean(payload.street);
+  const exteriorNumber = clean(payload.exteriorNumber);
+  const interiorNumber = clean(payload.interiorNumber);
+  const stateCode = clean(payload.stateCode).toUpperCase();
+  const stateName = clean(payload.stateName);
+  const city = clean(payload.city);
+  const postalCode = clean(payload.postalCode);
+  const phone = clean(payload.phone).replace(/\D/g, "");
+  const address = clean(payload.address) || [street, exteriorNumber, interiorNumber && `STE ${interiorNumber}`, city, stateCode, postalCode].filter(Boolean).join(", ");
+  return { name, address, phone, stateCode, stateName, city, street, exteriorNumber, interiorNumber: interiorNumber || null, postalCode };
+}
+
+function isComplete(values: ReturnType<typeof normalizePayload>) {
+  return values.name && values.street && values.exteriorNumber && values.stateCode && values.city && values.postalCode && values.phone.length === 10;
+}
+
 export async function GET() {
   try {
     const db = await getDb();
@@ -20,15 +38,12 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as Record<string, unknown>;
-    const name = clean(payload.name);
-    const address = clean(payload.address);
-    const phone = clean(payload.phone).replace(/\D/g, "");
-    if (!name || !address || phone.length !== 10) {
-      return Response.json({ error: "Completa nombre, dirección y teléfono de 10 dígitos." }, { status: 400 });
+    const values = normalizePayload(await request.json() as Record<string, unknown>);
+    if (!isComplete(values)) {
+      return Response.json({ error: "Completa nombre, estado, ciudad, calle, número exterior, ZIP y teléfono de 10 dígitos." }, { status: 400 });
     }
     const db = await getDb();
-    const [coldStorage] = await db.insert(coldStorages).values({ organizationCode: "USA", name, address, phone }).returning();
+    const [coldStorage] = await db.insert(coldStorages).values({ organizationCode: "USA", ...values }).returning();
     return Response.json({ coldStorage }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No fue posible guardar el cold storage." }, { status: 500 });
@@ -39,15 +54,13 @@ export async function PATCH(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id);
-    const name = clean(payload.name);
-    const address = clean(payload.address);
-    const phone = clean(payload.phone).replace(/\D/g, "");
-    if (!Number.isInteger(id) || id <= 0 || !name || !address || phone.length !== 10) {
-      return Response.json({ error: "Completa nombre, dirección y teléfono de 10 dígitos." }, { status: 400 });
+    const values = normalizePayload(payload);
+    if (!Number.isInteger(id) || id <= 0 || !isComplete(values)) {
+      return Response.json({ error: "Completa nombre, estado, ciudad, calle, número exterior, ZIP y teléfono de 10 dígitos." }, { status: 400 });
     }
     const db = await getDb();
     const [coldStorage] = await db.update(coldStorages)
-      .set({ name, address, phone })
+      .set(values)
       .where(and(eq(coldStorages.id, id), eq(coldStorages.organizationCode, "USA")))
       .returning();
     if (!coldStorage) {

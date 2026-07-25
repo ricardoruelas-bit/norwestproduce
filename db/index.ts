@@ -31,6 +31,7 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       id SERIAL PRIMARY KEY,
       organization_code TEXT NOT NULL DEFAULT 'USA',
       received_date TEXT NOT NULL,
+      load_date TEXT,
       supplier TEXT,
       warehouse TEXT NOT NULL,
       pickup_number TEXT,
@@ -52,6 +53,8 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       cold_storage TEXT,
       cold_storage_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
       additional_expenses TEXT NOT NULL DEFAULT '[]',
+      attachments TEXT NOT NULL DEFAULT '[]',
+      cost_attachments TEXT NOT NULL DEFAULT '{}',
       cost_currencies TEXT NOT NULL DEFAULT '{}',
       exchange_rate DOUBLE PRECISION,
       total_import_cost DOUBLE PRECISION,
@@ -66,6 +69,13 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       name TEXT NOT NULL,
       address TEXT NOT NULL,
       phone TEXT NOT NULL,
+      state_code TEXT NOT NULL DEFAULT '',
+      state_name TEXT NOT NULL DEFAULT '',
+      city TEXT NOT NULL DEFAULT '',
+      street TEXT NOT NULL DEFAULT '',
+      exterior_number TEXT NOT NULL DEFAULT '',
+      interior_number TEXT,
+      postal_code TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
     )
   `;
@@ -79,6 +89,7 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       presentation TEXT,
       size TEXT,
       label TEXT,
+      boxes_per_pallet INTEGER,
       created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
     )
   `;
@@ -105,6 +116,7 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       sale_price DOUBLE PRECISION,
       profit DOUBLE PRECISION,
       ship_date TEXT,
+      ship_to TEXT,
       pickup_date TEXT,
       total DOUBLE PRECISION,
       due_date TEXT,
@@ -154,6 +166,11 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       contact_name TEXT NOT NULL,
       contact_email TEXT NOT NULL,
       contact_phone TEXT NOT NULL,
+      buyer_name TEXT NOT NULL DEFAULT '',
+      buyer_email TEXT NOT NULL DEFAULT '',
+      buyer_office_phone TEXT NOT NULL DEFAULT '',
+      buyer_office_extension TEXT NOT NULL DEFAULT '',
+      buyer_mobile_phone TEXT NOT NULL DEFAULT '',
       assigned_seller TEXT,
       profit_percentage DOUBLE PRECISION NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
@@ -192,6 +209,24 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
     )
   `;
+
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS load_date TEXT`;
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS attachments TEXT NOT NULL DEFAULT '[]'`;
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS cost_attachments TEXT NOT NULL DEFAULT '{}'`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS state_code TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS state_name TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS street TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS exterior_number TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS interior_number TEXT`;
+  await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS boxes_per_pallet INTEGER`;
+  await sql`ALTER TABLE sales ADD COLUMN IF NOT EXISTS ship_to TEXT`;
+  await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_name TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_email TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_office_phone TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_office_extension TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_mobile_phone TEXT NOT NULL DEFAULT ''`;
 
   await sql`CREATE INDEX IF NOT EXISTS inventory_org_product_idx ON inventory_lots (organization_code, product)`;
   await sql`CREATE INDEX IF NOT EXISTS inventory_org_available_idx ON inventory_lots (organization_code, available_boxes)`;
