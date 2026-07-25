@@ -21,6 +21,7 @@ type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
 type InventoryEntryItem = { product: string; presentation: string; size: string; label: string; totalBoxes: string; boxesPerPallet: string; purchasePrice: string; purchaseCurrency: Currency };
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
+type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
@@ -201,6 +202,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [form, setForm] = useState(blankSale);
   const [saleLineItems, setSaleLineItems] = useState<InvoiceItem[]>([]);
+  const [inventorySaleLots, setInventorySaleLots] = useState<InventoryLot[] | null>(null);
+  const [inventorySaleDraft, setInventorySaleDraft] = useState<InventorySaleDraftItem[]>([]);
+  const [inventorySaleWarning, setInventorySaleWarning] = useState<{ lot: InventoryLot; salePrice: number; loss: number } | null>(null);
   const [saveState, setSaveState] = useState("");
   const [section, setSection] = useState<Section>("dashboard");
   const [collectionQuery, setCollectionQuery] = useState("");
@@ -234,6 +238,8 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
   const [invoiceSaveState, setInvoiceSaveState] = useState("");
   const [invoicePreview, setInvoicePreview] = useState<Sale | null>(null);
+  const [invoicedQuery, setInvoicedQuery] = useState("");
+  const [invoicedDate, setInvoicedDate] = useState("");
   const [adjustmentSale, setAdjustmentSale] = useState<Sale | null>(null);
   const [adjustmentItems, setAdjustmentItems] = useState<InvoiceItem[]>([]);
   const [adjustmentReason, setAdjustmentReason] = useState<InvoiceAdjustment["reason"]>("CAMBIO DE PRECIO");
@@ -1124,7 +1130,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   function openEditSale(sale: Sale) {
     if (!sale.id || sale.invoiceNumber) return;
     setEditingSale(sale);
-    setSaleLineItems(invoiceItemsFor(sale).map((item) => ({ ...item, purchasePrice: item.purchasePrice ?? sale.purchasePrice ?? 0 })));
+    setSaleLineItems(invoiceItemsFor(sale).map((item) => ({ ...item, inventoryLotId: item.inventoryLotId ?? sale.inventoryLotId ?? undefined, purchasePrice: item.purchasePrice ?? sale.purchasePrice ?? 0 })));
     setForm({
       saleDate: sale.saleDate,
       operationType: sale.operationType,
@@ -1325,6 +1331,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setModalStep("closed");
     setEditingSale(null);
     setSaleLineItems([]);
+    setInventorySaleLots(null);
+    setInventorySaleDraft([]);
+    setInventorySaleWarning(null);
     setSaveState("");
   }
 
@@ -1336,25 +1345,86 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     return "";
   }
 
-  function selectInventoryLot(lot: InventoryLot) {
-    const available = lot.availableBoxes + (editingSale?.inventoryLotId === lot.id ? editingSale.boxes : 0);
+  function editingInventoryQuantity(lotId: number) {
+    if (editingSale?.operationType !== "IMPORTED_INVENTORY") return 0;
+    const items = invoiceItemsFor(editingSale).filter((item) => Number(item.inventoryLotId) === lotId);
+    if (items.length) return items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    return editingSale.inventoryLotId === lotId ? editingSale.boxes : 0;
+  }
+
+  function availableForSaleLot(lot: InventoryLot) {
+    return lot.availableBoxes + editingInventoryQuantity(lot.id);
+  }
+
+  function openInventorySaleLoad(group: InventoryLoadGroup) {
+    setInventorySaleWarning(null);
+    setInventorySaleLots(group.lots);
+    const existingItems = editingSale?.operationType === "IMPORTED_INVENTORY" ? invoiceItemsFor(editingSale) : [];
+    setInventorySaleDraft(group.lots
+      .filter((lot) => availableForSaleLot(lot) > 0 || existingItems.some((item) => Number(item.inventoryLotId) === lot.id) || editingSale?.inventoryLotId === lot.id)
+      .map((lot) => {
+        const existingItem = existingItems.find((item) => Number(item.inventoryLotId) === lot.id) || (editingSale?.inventoryLotId === lot.id ? existingItems[0] : undefined);
+        return { lot, boxes: existingItem?.quantity ? String(existingItem.quantity) : "", salePrice: existingItem?.unitPrice != null ? String(existingItem.unitPrice) : "" };
+      }));
+  }
+
+  function updateInventorySaleDraft(lotId: number, changes: Partial<Omit<InventorySaleDraftItem, "lot">>) {
+    setInventorySaleDraft((current) => current.map((item) => item.lot.id === lotId ? { ...item, ...changes } : item));
+  }
+
+  function closeInventorySaleLoad() {
+    setInventorySaleLots(null);
+    setInventorySaleDraft([]);
+    setInventorySaleWarning(null);
+  }
+
+  function applyInventorySaleLoad() {
+    const selectedItems = inventorySaleDraft
+      .map((item) => ({ ...item, quantity: Number(item.boxes), unitPrice: Number(item.salePrice) }))
+      .filter((item) => item.quantity > 0 || item.salePrice.trim());
+    if (!selectedItems.length) return setInventorySaleWarning(null), setSaveState("Ingresa cajas a vender en al menos un producto de la factura.");
+    const invalid = selectedItems.find((item) => !Number.isInteger(item.quantity) || item.quantity <= 0 || item.quantity > availableForSaleLot(item.lot) || !Number.isFinite(item.unitPrice) || item.unitPrice < 0);
+    if (invalid) return setSaveState(`Revisa cajas disponibles y precio de venta de ${invalid.lot.product}.`);
+    const belowCost = selectedItems.find((item) => item.lot.unitCost != null && item.unitPrice < item.lot.unitCost);
+    if (belowCost?.lot.unitCost != null) {
+      setInventorySaleWarning({ lot: belowCost.lot, salePrice: belowCost.unitPrice, loss: belowCost.lot.unitCost - belowCost.unitPrice });
+      return;
+    }
+    const nextItems: InvoiceItem[] = selectedItems.map((item) => ({
+      inventoryLotId: item.lot.id,
+      product: item.lot.product,
+      presentation: item.lot.presentation || "",
+      size: item.lot.size || "",
+      label: item.lot.label || "",
+      quantity: item.quantity,
+      purchasePrice: item.lot.unitCost ?? 0,
+      unitPrice: item.unitPrice,
+    }));
+    const first = nextItems[0];
+    const firstLot = selectedItems[0].lot;
+    const warehouse = firstLot.coldStorage || firstLot.warehouse;
+    const warehouseAddress = coldStorages.find((item) => item.name === warehouse);
+    setSaleLineItems(nextItems);
     setForm((current) => ({
       ...current,
-      inventoryLotId: String(lot.id),
-      supplier: lot.supplier ?? "",
-      warehouse: lot.warehouse,
-      pickupNumber: lot.pickupNumber ?? "",
-      product: lot.product,
-      presentation: lot.presentation ?? "",
-      size: lot.size ?? "",
-      label: lot.label ?? "",
-      purchasePrice: lot.unitCost == null ? "" : String(lot.unitCost),
-      boxes: Number(current.boxes) > available ? "" : current.boxes,
+      inventoryLotId: first.inventoryLotId ? String(first.inventoryLotId) : "",
+      supplier: firstLot.supplier ?? "",
+      warehouse,
+      pickupNumber: firstLot.pickupNumber ?? "",
+      product: nextItems.length > 1 ? `${first.product} + ${nextItems.length - 1} partida(s)` : first.product,
+      presentation: nextItems.length > 1 ? "" : first.presentation,
+      size: nextItems.length > 1 ? "" : first.size,
+      label: nextItems.length > 1 ? "" : first.label,
+      purchasePrice: nextItems.length > 1 ? "" : String(first.purchasePrice ?? ""),
+      salePrice: nextItems.length > 1 ? "" : String(first.unitPrice ?? ""),
+      boxes: String(nextItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0)),
+      shipTo: current.shipTo || [warehouseAddress?.city, warehouseAddress?.stateCode].filter(Boolean).join(", "),
     }));
+    setSaveState("");
+    closeInventorySaleLoad();
   }
 
   const selectedLot = inventory.find((lot) => lot.id === Number(form.inventoryLotId));
-  const selectedLotAvailable = selectedLot ? selectedLot.availableBoxes + (editingSale?.inventoryLotId === selectedLot.id ? editingSale.boxes : 0) : undefined;
   const selectedColdStorage = coldStorages.find((item) => item.name === inventoryForm.coldStorage);
   const registeredSaleWarehouses = Array.from(new Set(salesRows.map((row) => row.warehouse.trim()).filter(Boolean)))
     .filter((name) => !coldStorages.some((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase()))
@@ -1489,6 +1559,19 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     };
   }, [salesRows, collectionFilter, collectionCustomer, collectionQuery]);
 
+  const invoicedSales = useMemo(() => {
+    const queryValue = invoicedQuery.trim().toLocaleLowerCase();
+    return salesRows
+      .filter((row) => Boolean(row.invoiceNumber) && !row.canceledAt)
+      .filter((row) => {
+        const matchesQuery = !queryValue || [row.customer, row.invoiceNumber, row.pickupNumber, row.purchaseOrder]
+          .some((value) => String(value || "").toLocaleLowerCase().includes(queryValue));
+        const matchesDate = !invoicedDate || row.saleDate === invoicedDate;
+        return matchesQuery && matchesDate;
+      })
+      .sort((a, b) => (b.invoiceNumber || "").localeCompare(a.invoiceNumber || ""));
+  }, [salesRows, invoicedQuery, invoicedDate]);
+
   const statementRows = useMemo(() => {
     if (!statementCustomer) return [];
     const grouped = new Map<string, Sale>();
@@ -1512,14 +1595,20 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const extras = additionalExpenses.reduce((sum, item) => sum + usd(item.amount, item.currency), 0);
     const totalUsd = purchase + fixed + extras;
     const totalMxn = rate ? totalUsd * rate : 0;
-    return { totalUsd, totalMxn, unitUsd: boxes ? totalUsd / boxes : 0, unitMxn: boxes ? totalMxn / boxes : 0 };
+    const fixedPerBox = boxes ? (fixed + extras) / boxes : 0;
+    const itemCosts = inventoryItems.map((item, index) => {
+      const unitUsd = usd(item.purchasePrice, item.purchaseCurrency) + fixedPerBox;
+      return { key: `${item.product || "producto"}-${index}`, label: [item.product || `Producto ${index + 1}`, item.size, item.presentation, item.label].filter(Boolean).join(" · "), unitUsd, unitMxn: rate ? unitUsd * rate : 0 };
+    });
+    return { totalUsd, totalMxn, unitUsd: boxes ? totalUsd / boxes : 0, unitMxn: boxes ? totalMxn / boxes : 0, itemCosts };
   }, [inventoryForm, inventoryItems, additionalExpenses, costCurrencies]);
 
   const saleDraftSummary = useMemo(() => {
-    const total = form.operationType === "DIRECT_RESALE"
+    const usesLineItems = form.operationType === "DIRECT_RESALE" || saleLineItems.length > 0;
+    const total = usesLineItems
       ? saleLineItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0)
       : Number(form.boxes || 0) * Number(form.salePrice || 0);
-    const profit = form.operationType === "DIRECT_RESALE"
+    const profit = usesLineItems
       ? saleLineItems.reduce((sum, item) => sum + (Number(item.unitPrice || 0) - Number(item.purchasePrice || 0)) * Number(item.quantity || 0), 0)
       : (Number(form.salePrice || 0) - Number(form.purchasePrice || 0)) * Number(form.boxes || 0);
     const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === form.customer);
@@ -1531,33 +1620,38 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   async function saveSale(event: FormEvent) {
     event.preventDefault();
     if (form.pickupDate && form.pickupDate < localDateKey()) {
-      setSaveState("La fecha de pickup no puede ser anterior al día actual.");
+      setSaveState("La fecha de pickup no puede ser anterior al dia actual.");
       return;
     }
     if (form.operationType === "DIRECT_RESALE" && (!saleLineItems.length || saleLineItems.some((item) => !item.product || !Number.isInteger(Number(item.quantity)) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.purchasePrice)) || Number(item.purchasePrice) < 0 || !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0))) {
       setSaveState("Agrega al menos un producto y revisa cajas, precio de compra y precio de venta.");
       return;
     }
-    if (form.operationType === "IMPORTED_INVENTORY" && selectedLot?.unitCost != null && Number(form.salePrice) < selectedLot.unitCost) {
-      const salePrice = Number(form.salePrice) || 0;
-      const loss = selectedLot.unitCost - salePrice;
-      const proceed = window.confirm(`El precio ingresado está por debajo del costo.\nCosto por caja: ${money.format(selectedLot.unitCost)}\nPérdida por caja: ${money.format(loss)}\n\n¿Deseas guardar la venta de todos modos?`);
-      if (!proceed) return;
+    if (form.operationType === "IMPORTED_INVENTORY") {
+      if (!saleLineItems.length || saleLineItems.some((item) => !item.inventoryLotId || !Number.isInteger(Number(item.quantity)) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0)) {
+        setSaveState("Selecciona una factura y captura las cajas y precio de venta de cada producto.");
+        return;
+      }
+      const belowCost = saleLineItems.find((item) => Number(item.unitPrice) < Number(item.purchasePrice ?? 0));
+      if (belowCost) {
+        setSaveState(`El precio de ${belowCost.product} esta por debajo del costo. Modifica el precio desde el detalle de la factura.`);
+        return;
+      }
     }
     const firstLine = saleLineItems[0];
-    const directBoxes = saleLineItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-    setSaveState("Guardando…");
+    const lineBoxes = saleLineItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    setSaveState("Guardando...");
     const payload = {
-      saleDate: form.saleDate, operationType: form.operationType, supplier: form.supplier, inventoryLotId: form.inventoryLotId ? Number(form.inventoryLotId) : null,
+      saleDate: form.saleDate, operationType: form.operationType, supplier: form.supplier, inventoryLotId: firstLine?.inventoryLotId || (form.inventoryLotId ? Number(form.inventoryLotId) : null),
       customer: form.customer, sellerName: form.sellerName || null, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse, pickupNumber: form.pickupNumber,
-      boxes: form.operationType === "DIRECT_RESALE" ? directBoxes : Number(form.boxes),
-      product: form.operationType === "DIRECT_RESALE" ? (firstLine?.product || "") : form.product,
-      presentation: form.operationType === "DIRECT_RESALE" ? (firstLine?.presentation || "") : form.presentation,
-      size: form.operationType === "DIRECT_RESALE" ? (firstLine?.size || "") : form.size,
-      label: form.operationType === "DIRECT_RESALE" ? (firstLine?.label || "") : form.label,
-      purchasePrice: form.operationType === "DIRECT_RESALE" ? (firstLine?.purchasePrice ?? null) : (form.purchasePrice ? Number(form.purchasePrice) : null),
-      salePrice: form.operationType === "DIRECT_RESALE" ? (firstLine?.unitPrice ?? null) : (form.salePrice ? Number(form.salePrice) : null),
-      items: form.operationType === "DIRECT_RESALE" ? saleLineItems : undefined,
+      boxes: lineBoxes || Number(form.boxes),
+      product: firstLine?.product || form.product,
+      presentation: firstLine?.presentation || form.presentation,
+      size: firstLine?.size || form.size,
+      label: firstLine?.label || form.label,
+      purchasePrice: firstLine?.purchasePrice ?? (form.purchasePrice ? Number(form.purchasePrice) : null),
+      salePrice: firstLine?.unitPrice ?? (form.salePrice ? Number(form.salePrice) : null),
+      items: saleLineItems.length ? saleLineItems : undefined,
       shipDate: null, shipTo: form.shipTo, pickupDate: form.pickupDate || null,
       dueDate: form.pickupDate ? new Date(new Date(`${form.pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null,
       loadStatus: editingSale?.loadStatus || "OK", invoiceNumber: null,
@@ -1673,6 +1767,11 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         {invoiceSale && <section className="invoice-focus"><div><span>Venta seleccionada</span><h2>{invoiceSale.customer}</h2><p>Pickup #{invoiceSale.pickupNumber} · {number.format(invoiceSale.boxes)} cajas · {invoiceSale.total == null ? "Total pendiente" : money.format(invoiceSale.total)}</p>{invoiceEligibilityMessage(invoiceSale) && <small className="blocking-notice">{invoiceEligibilityMessage(invoiceSale)}</small>}</div><button type="button" className="secondary-button" onClick={() => setSection("dashboard")}>Volver a ventas</button></section>}
         <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Ventas pendientes de facturar</h2><p>Selecciona una venta desde el registro para preparar su factura.</p></div><span className="record-count">{salesRows.filter((row) => !row.invoiceNumber).length} pendientes</span></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>Bodega</th><th>Producto</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{salesRows.filter((row) => !row.invoiceNumber).map((row, index) => <tr className={invoiceSale?.id === row.id ? "selected-invoice-row" : ""} key={row.id ?? index}><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{row.pickupNumber}</td><td>{row.warehouse}</td><td>{row.product}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td><td><button type="button" className="invoice-button" title={invoiceEligibilityMessage(row) || "Preparar factura"} onClick={() => openInvoicePreparation(row)}>Preparar factura</button></td></tr>)}</tbody></table></div>
+        </section>
+        <section className="sales-panel catalog-panel invoiced-sales-panel"><div className="panel-heading"><div><h2>Ventas facturadas</h2><p>Consulta facturas emitidas por cliente, factura, pickup, PO o fecha.</p></div><span className="record-count">{invoicedSales.length} facturas</span></div>
+          <div className="filters invoiced-filters"><label className="search-box"><span>Buscar</span><input value={invoicedQuery} onChange={(event) => setInvoicedQuery(event.target.value)} placeholder="Buscar cliente, factura, pickup o PO" /></label><label className="date-search-field"><span>Fecha</span><input type="date" value={invoicedDate} onChange={(event) => setInvoicedDate(event.target.value)} /></label>{(invoicedQuery || invoicedDate) && <button type="button" className="secondary-button" onClick={() => { setInvoicedQuery(""); setInvoicedDate(""); }}>Limpiar</button>}</div>
+          <div className="table-wrap catalog-table"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>PO #</th><th>Bodega</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{invoicedSales.map((row) => <tr key={row.id}><td><strong>#{row.invoiceNumber}</strong></td><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong></td><td>{row.pickupNumber}</td><td>{row.purchaseOrder || "N/A"}</td><td>{row.warehouse}</td><td className="numeric strong-number">{row.total == null ? "-" : money.format(row.total)}</td><td><button type="button" className="edit-button" onClick={() => openInvoicePreview(row)}>Ver factura</button></td></tr>)}</tbody></table></div>
+          {invoicedSales.length === 0 && <div className="catalog-empty"><strong>No hay facturas con esos filtros</strong><span>Ajusta la busqueda o limpia la fecha.</span></div>}
         </section>
       </section>}
 
@@ -1815,16 +1914,26 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
               {!saleLineItems.length && <div className="sale-lines-empty">Agrega el primer producto para continuar.</div>}
             </section>
           </> : <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Selecciona del inventario</h3><p>Solo aparecen partidas con cajas disponibles.</p></div></div>
-            {inventoryLoading ? <div className="inventory-empty">Consultando inventario…</div> : inventory.length === 0 ? <div className="inventory-empty"><strong>No hay inventario importado disponible</strong><span>Cuando se registren entradas de importación, aparecerán aquí para poder venderlas.</span></div> : <div className="inventory-list">{inventory.filter((lot) => lot.availableBoxes > 0 || lot.id === editingSale?.inventoryLotId).map((lot) => { const available = lot.availableBoxes + (editingSale?.inventoryLotId === lot.id ? editingSale.boxes : 0); return <button key={lot.id} type="button" className={`inventory-row ${form.inventoryLotId === String(lot.id) ? "selected" : ""}`} onClick={() => selectInventoryLot(lot)}><span className="inventory-radio"/><span className="inventory-lot-reference"><strong>Factura #{lot.pickupNumber || "S/R"}</strong></span><span><strong>{inventoryAgeDays(lot)}</strong><small>días en inventario</small></span><span><strong>{lot.product}</strong><small>Producto</small></span><span><strong>{lot.size || "—"}</strong><small>Tamaño</small></span><span><strong>{lot.presentation || "—"}</strong><small>Presentación</small></span><span><strong>{lot.label || "—"}</strong><small>Etiqueta</small></span><span><strong>{lot.warehouse}</strong><small>Bodega</small></span><span className="inventory-boxes"><strong>{number.format(available)}</strong><small>cajas disponibles</small></span></button>; })}</div>}
+            {inventoryLoading ? <div className="inventory-empty">Consultando inventario…</div> : inventory.length === 0 ? <div className="inventory-empty"><strong>No hay inventario importado disponible</strong><span>Cuando se registren entradas de importación, aparecerán aquí para poder venderlas.</span></div> : <div className="inventory-list">{inventoryLoadGroups.filter((group) => group.lots.some((lot) => availableForSaleLot(lot) > 0)).map((group) => { const lot = group.first; const selected = group.lots.some((item) => saleLineItems.some((line) => line.inventoryLotId === item.id)); const aliases = Array.from(new Set(group.lots.map((item) => productAlias(item.product)))); return <button key={group.key} type="button" className={`inventory-row ${selected ? "selected" : ""}`} onClick={() => openInventorySaleLoad(group)}><span className="inventory-radio"/><span className="inventory-lot-reference"><strong>Factura #{lot.pickupNumber || "S/R"}</strong></span><span><strong>{inventoryAgeDays(lot)}</strong><small>dias en inventario</small></span><span><strong>{aliases.join(" / ")}</strong><small>{group.lots.length > 1 ? `${group.lots.length} productos` : "Producto"}</small></span><span><strong>{group.lots.length > 1 ? "Varios" : lot.size || "-"}</strong><small>Tamano</small></span><span><strong>{group.lots.length > 1 ? "Varios" : lot.presentation || "-"}</strong><small>Presentacion</small></span><span><strong>{group.lots.length > 1 ? "Varios" : lot.label || "-"}</strong><small>Etiqueta</small></span><span><strong>{lot.coldStorage || lot.warehouse}</strong><small>Bodega</small></span><span className="inventory-boxes"><strong>{number.format(group.lots.reduce((sum, item) => sum + availableForSaleLot(item), 0))}</strong><small>cajas disponibles</small></span></button>; })}</div>}
           </section>}
 
           {(form.operationType === "DIRECT_RESALE" || selectedLot) && <section className="form-section sale-section"><div className="form-section-heading"><span>2</span><div><h3>Información de la venta</h3><p>Datos del cliente, entrega y precio de venta.</p></div></div>
-            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega de Pickup<select required value={selectedSaleWarehouse?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{coldStorages.map((item) => <option key={`catalog:${item.id}`} value={item.id}>{item.name}</option>)}{registeredSaleWarehouses.map((name) => <option key={`legacy:${name}`} value={`legacy:${name}`}>{name}</option>)}{form.warehouse && !selectedSaleWarehouse && !registeredSaleWarehouses.includes(form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}<option value="__new__">＋ Agregar bodega</option></select>{selectedSaleWarehouse && <small className="field-help">{selectedSaleWarehouse.address} · {formatPhone(selectedSaleWarehouse.phone)}</small>}</label>{form.operationType === "IMPORTED_INVENTORY" && <><label>Cajas<input required min="1" max={selectedLotAvailable} type="number" value={form.boxes} onChange={(e) => setForm({...form, boxes:e.target.value})} /></label><label>Precio de venta{moneyField(form.salePrice, (value) => setForm({...form, salePrice:value}), true)}</label></>}<label>SHIP TO<input list="ship-to-options" value={form.shipTo} onChange={(e) => setForm({...form, shipTo:e.target.value})} placeholder="Ciudad, Estado o términos de venta" /><datalist id="ship-to-options"><option value="FOB McAllen" /><option value="FOB Nogales" /><option value="Delivered" /></datalist></label><label>Día de pickup<input min={localDateKey()} type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /><small className="field-help">No puede ser anterior al día actual.</small></label></div>
+            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega de Pickup<select required value={selectedSaleWarehouse?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{coldStorages.map((item) => <option key={`catalog:${item.id}`} value={item.id}>{item.name}</option>)}{registeredSaleWarehouses.map((name) => <option key={`legacy:${name}`} value={`legacy:${name}`}>{name}</option>)}{form.warehouse && !selectedSaleWarehouse && !registeredSaleWarehouses.includes(form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}<option value="__new__">＋ Agregar bodega</option></select>{selectedSaleWarehouse && <small className="field-help">{selectedSaleWarehouse.address} · {formatPhone(selectedSaleWarehouse.phone)}</small>}</label>{form.operationType === "IMPORTED_INVENTORY" && saleLineItems.length > 0 && <div className="span-all selected-inventory-sale"><div><strong>Productos seleccionados</strong><button type="button" className="secondary-button" onClick={() => { const group = inventoryLoadGroups.find((item) => item.lots.some((lot) => lot.id === Number(form.inventoryLotId))); if (group) openInventorySaleLoad(group); }}>Editar detalle</button></div>{saleLineItems.map((item) => <span key={`${item.inventoryLotId}-${item.product}`}><b>{productAlias(item.product)}</b>{number.format(Number(item.quantity || 0))} cajas ? {money.format(Number(item.unitPrice || 0))} venta ? costo {money.format(Number(item.purchasePrice || 0))}</span>)}</div>}<label>SHIP TO<input list="ship-to-options" value={form.shipTo} onChange={(e) => setForm({...form, shipTo:e.target.value})} placeholder="Ciudad, Estado o términos de venta" /><datalist id="ship-to-options"><option value="FOB McAllen" /><option value="FOB Nogales" /><option value="Delivered" /></datalist></label><label>Día de pickup<input min={localDateKey()} type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /><small className="field-help">No puede ser anterior al día actual.</small></label></div>
           </section>}
           <div className="form-total"><span>Total</span><strong>{money.format(saleDraftSummary.total)}</strong><small>Utilidad total: {money.format(saleDraftSummary.profit)}</small><small>Utilidad vendedor: {money.format(saleDraftSummary.sellerProfit)}</small></div>
-          {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !selectedLot}>{editingSale ? "Guardar cambios" : "Guardar venta"}</button></div>
+          {saveState && <p className="form-message">{saveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button><button className="primary-button" type="submit" disabled={form.operationType === "IMPORTED_INVENTORY" && !saleLineItems.length}>{editingSale ? "Guardar cambios" : "Guardar venta"}</button></div>
         </form>}
       </div>}
+
+      {inventorySaleLots && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal inventory-sale-detail-modal">
+        <div className="modal-heading"><div><p className="eyebrow">Venta de inventario importado</p><h2>Factura #{inventorySaleLots[0]?.pickupNumber || "S/R"}</h2><p className="modal-intro">Captura las cajas a vender y el precio de venta por producto. Cierra esta ventana solo con Continuar o Cancelar.</p></div></div>
+        <div className="inventory-sale-detail-list">{inventorySaleDraft.map((item) => {
+          const available = availableForSaleLot(item.lot);
+          return <article key={item.lot.id}><div><span className="product-alias-chip">{productAlias(item.lot.product)}</span><strong>{item.lot.product}</strong><small>{[item.lot.size, item.lot.presentation, item.lot.label].filter(Boolean).join(" · ") || "Sin detalle"}</small></div><span><small>Costo/caja</small><strong>{item.lot.unitCost == null ? "—" : money.format(item.lot.unitCost)}</strong></span><span><small>Disponible</small><strong>{number.format(available)}</strong></span><label><small>Cajas a vender</small><input min="0" max={available} step="1" type="number" value={item.boxes} onChange={(event) => updateInventorySaleDraft(item.lot.id, { boxes: event.target.value })} /></label><label><small>Precio venta</small>{moneyField(item.salePrice, (value) => updateInventorySaleDraft(item.lot.id, { salePrice: value }))}</label></article>;
+        })}</div>
+        {inventorySaleWarning && <div className="below-cost-alert"><strong>Precio por debajo del costo</strong><span>{inventorySaleWarning.lot.product}: costo {money.format(inventorySaleWarning.lot.unitCost || 0)} por caja, perdida {money.format(inventorySaleWarning.loss)} por caja.</span><div><button type="button" className="secondary-button" onClick={() => setInventorySaleWarning(null)}>Cancelar</button><button type="button" className="primary-button" onClick={() => setInventorySaleWarning(null)}>Modificar precio de venta</button></div></div>}
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInventorySaleLoad}>Cancelar</button><button type="button" className="primary-button" onClick={applyInventorySaleLoad}>Continuar</button></div>
+      </section></div>}
 
       {inventoryModal && <div className="modal-backdrop"><form className="sale-modal sale-modal-wide" onSubmit={saveInventoryEntry} onKeyDown={moveToNextField}>
         <div className="modal-heading"><div><p className="eyebrow">Inventario importado</p><h2>{editingInventoryId ? "Editar entrada" : "Registrar entrada"}</h2><p className="modal-intro">Esta partida quedará disponible para seleccionarla al registrar una venta de inventario.</p></div></div>
@@ -1833,7 +1942,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         <section className="form-section cost-section"><div className="form-section-heading"><span>2</span><div><h3>Costos y gastos de importación</h3><p>Los gastos son totales de la carga y se distribuyen entre todos los bultos o cajas.</p></div></div><div className="exchange-rate-row"><label>Tipo de cambio de esta transacción <span>1 USD =</span><input required min="0.0001" step="0.0001" type="number" value={inventoryForm.exchangeRate} onChange={(e) => setInventoryForm({...inventoryForm, exchangeRate:e.target.value})} /><b>MXN</b></label></div><div className="form-grid cost-grid">
           {costInput("Flete total", "freightCost")}{costInput("Aduana MX total", "mexicoCustomsCost")}{costInput("Aduana US total", "usCustomsCost")}{costInput("Sobrepeso total", "overweightCost")}{costInput("Semáforo rojo MX", "redLightCost")}{costInput("Semáforo rojo US", "redLightUsCost")}<label>Cold storage de destino *<select required value={selectedColdStorage?.id || ""} onChange={(e) => chooseColdStorage(e.target.value)}><option value="">Selecciona un cold storage</option>{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar nuevo cold storage</option></select>{selectedColdStorage && <small className="field-help">{selectedColdStorage.address} · {formatPhone(selectedColdStorage.phone)}</small>}</label>{costInput("Costo total de cold storage", "coldStorageCost")}
         </div><div className="extra-expenses"><div className="extra-heading"><strong>Otros costos o gastos totales</strong><button type="button" className="add-expense-button" onClick={() => setAdditionalExpenses((current) => [...current, { concept: "", amount: "", currency: "USD" }])}>＋ Agregar gasto</button></div>{additionalExpenses.map((expense, index) => <div className="expense-row" key={index}><div className="expense-concept-field"><input aria-label="Concepto del gasto" placeholder="Concepto" autoComplete="off" value={expense.concept} onFocus={() => setActiveExpenseConcept(index)} onBlur={() => window.setTimeout(() => setActiveExpenseConcept((current) => current === index ? null : current), 120)} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept: e.target.value } : item))} />{activeExpenseConcept === index && expenseConcepts.length > 0 && <div className="expense-concept-menu">{expenseConcepts.filter((concept) => concept.toLocaleLowerCase().includes(expense.concept.toLocaleLowerCase())).map((concept) => <button type="button" key={concept} onMouseDown={(event) => event.preventDefault()} onClick={() => { setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept } : item)); setActiveExpenseConcept(null); }}>{concept}</button>)}</div>}</div><span className="dollar-input"><span>$</span><input aria-label="Importe total del gasto" placeholder="Importe total" min="0" step="0.01" type="number" value={expense.amount} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item))} /></span><select aria-label="Moneda del gasto" value={expense.currency} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: e.target.value as Currency } : item))}><option value="USD">USD</option><option value="MXN">MXN</option></select><button type="button" aria-label="Eliminar gasto" onClick={() => setAdditionalExpenses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>
-        <div className="import-cost-summary"><span><small>Costo total de importación</small><strong>{money.format(inventoryCostSummary.totalUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.totalMxn)} MXN</b></span><span><small>Costo real por caja</small><strong>{money.format(inventoryCostSummary.unitUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.unitMxn)} MXN</b></span></div></section>
+        <div className="import-cost-summary"><span><small>Costo total de importación</small><strong>{money.format(inventoryCostSummary.totalUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.totalMxn)} MXN</b></span><span><small>Costo real por caja</small><strong>{money.format(inventoryCostSummary.unitUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.unitMxn)} MXN</b></span></div>{inventoryItems.length > 1 && <div className="import-product-costs">{inventoryCostSummary.itemCosts.map((item) => <span key={item.key}><small>{item.label}</small><strong>{money.format(item.unitUsd)} USD</strong><b>{moneyMxn.format(item.unitMxn)} MXN</b></span>)}</div>}</section>
         {inventorySaveState && <p className="form-message">{inventorySaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setInventoryModal(false); setEditingInventoryId(null); }}>Cancelar</button><button type="submit" className="primary-button">{editingInventoryId ? "Guardar cambios" : "Registrar entrada"}</button></div>
       </form></div>}
 

@@ -20,6 +20,18 @@ function currentDateInMcAllen() {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
+function inventoryAllocationsFor(row: { operationType: string; inventoryLotId?: number | null; boxes: number; invoiceItems?: string | null }) {
+  if (row.operationType !== "IMPORTED_INVENTORY") return [];
+  try {
+    const items = JSON.parse(row.invoiceItems || "[]") as InvoiceItem[];
+    const allocations = items
+      .map((item) => ({ inventoryLotId: Number(item.inventoryLotId), quantity: Number(item.quantity) }))
+      .filter((item) => Number.isInteger(item.inventoryLotId) && item.inventoryLotId > 0 && Number.isFinite(item.quantity) && item.quantity > 0);
+    if (allocations.length) return allocations;
+  } catch { /* Fall back to the legacy single-lot sale fields. */ }
+  return row.inventoryLotId ? [{ inventoryLotId: row.inventoryLotId, quantity: row.boxes }] : [];
+}
+
 function localDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -45,16 +57,16 @@ export async function DELETE() {
   try {
     const db = await getDb();
     const existingSales = await db
-      .select({ id: sales.id, inventoryLotId: sales.inventoryLotId, operationType: sales.operationType, boxes: sales.boxes })
+      .select({ id: sales.id, inventoryLotId: sales.inventoryLotId, operationType: sales.operationType, boxes: sales.boxes, invoiceItems: sales.invoiceItems })
       .from(sales)
       .where(eq(sales.organizationCode, "USA"));
 
     for (const row of existingSales) {
-      if (row.operationType === "IMPORTED_INVENTORY" && row.inventoryLotId) {
+      for (const allocation of inventoryAllocationsFor(row)) {
         await db
           .update(inventoryLots)
-          .set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${row.boxes}` })
-          .where(and(eq(inventoryLots.id, row.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+          .set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${allocation.quantity}` })
+          .where(and(eq(inventoryLots.id, allocation.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
       }
     }
 
@@ -83,15 +95,55 @@ export async function POST(request: Request) {
     if (operationType === "DIRECT_RESALE" && (!directItems.length || directItems.length > 25 || directItems.some((item) => !item.product || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.purchasePrice) || item.purchasePrice < 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0))) {
       return Response.json({ error: "Revisa productos, bultos/cajas, precio de compra y precio de venta." }, { status: 400 });
     }
-    const boxes = directItems.length ? directItems.reduce((sum, item) => sum + item.quantity, 0) : Number(payload.boxes ?? 0);
-    const salePrice = directItems.length === 1 ? directItems[0].unitPrice : payload.salePrice == null ? null : Number(payload.salePrice);
+    let lineItems: InvoiceItem[] = directItems;
+    let inventoryLotId: number | null = null;
+    if (operationType === "IMPORTED_INVENTORY" && Array.isArray(payload.items) && payload.items.length) {
+      const requestedItems = payload.items.map((item) => ({
+        inventoryLotId: Number(item.inventoryLotId),
+        quantity: Number(item.quantity),
+        unitPrice: Number(item.unitPrice),
+      }));
+      if (requestedItems.length > 25 || requestedItems.some((item) => !Number.isInteger(item.inventoryLotId) || item.inventoryLotId <= 0 || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) {
+        return Response.json({ error: "Revisa productos, bultos/cajas y precio de venta del inventario." }, { status: 400 });
+      }
+      const importedItems: InvoiceItem[] = [];
+      for (const item of requestedItems) {
+        const [lot] = await db.select().from(inventoryLots).where(and(
+          eq(inventoryLots.id, item.inventoryLotId),
+          eq(inventoryLots.organizationCode, "USA"),
+          gte(inventoryLots.availableBoxes, item.quantity),
+        )).limit(1);
+        if (!lot) return Response.json({ error: "Una partida seleccionada ya no tiene suficientes cajas disponibles." }, { status: 409 });
+        importedItems.push({
+          inventoryLotId: lot.id,
+          product: lot.product,
+          presentation: lot.presentation || "",
+          size: lot.size || "",
+          label: lot.label || "",
+          quantity: item.quantity,
+          purchasePrice: lot.unitCost ?? 0,
+          unitPrice: item.unitPrice,
+        });
+      }
+      lineItems = importedItems;
+      inventoryLotId = importedItems[0]?.inventoryLotId ?? null;
+      const firstLot = inventoryLotId ? await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"))).limit(1) : [];
+      const lot = firstLot[0];
+      if (lot) {
+        payload.product = payload.product?.trim() || lot.product;
+        payload.presentation = payload.presentation?.trim() || lot.presentation || "";
+        payload.size = payload.size?.trim() || lot.size || "";
+        payload.label = payload.label?.trim() || lot.label || "";
+      }
+    }
+    const boxes = lineItems.length ? lineItems.reduce((sum, item) => sum + Number(item.quantity), 0) : Number(payload.boxes ?? 0);
+    const salePrice = lineItems.length === 1 ? lineItems[0].unitPrice : payload.salePrice == null ? null : Number(payload.salePrice);
     if (!Number.isFinite(boxes) || boxes <= 0) {
       return Response.json({ error: "La cantidad de cajas debe ser mayor que cero." }, { status: 400 });
     }
-    const total = directItems.length ? directItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) : salePrice == null || !Number.isFinite(salePrice) ? null : boxes * salePrice;
+    const total = lineItems.length ? lineItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) : salePrice == null || !Number.isFinite(salePrice) ? null : boxes * salePrice;
     let purchasePrice = payload.purchasePrice == null ? null : Number(payload.purchasePrice);
-    let inventoryLotId: number | null = null;
-    if (operationType === "IMPORTED_INVENTORY") {
+    if (operationType === "IMPORTED_INVENTORY" && !lineItems.length) {
       inventoryLotId = Number(payload.inventoryLotId);
       if (!Number.isInteger(inventoryLotId) || inventoryLotId <= 0) {
         return Response.json({ error: "Selecciona una partida disponible del inventario." }, { status: 400 });
@@ -108,8 +160,8 @@ export async function POST(request: Request) {
       payload.size = payload.size?.trim() || lot.size || "";
       payload.label = payload.label?.trim() || lot.label || "";
     }
-    const profit = directItems.length ? directItems.reduce((sum, item) => sum + (item.unitPrice - item.purchasePrice) * item.quantity, 0) : total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
-    const primary = directItems[0];
+    const profit = lineItems.length ? lineItems.reduce((sum, item) => sum + (item.unitPrice - Number(item.purchasePrice ?? 0)) * item.quantity, 0) : total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
+    const primary = lineItems[0];
     const [created] = await db.insert(sales).values({
       organizationCode: "USA",
       operationType,
@@ -122,12 +174,12 @@ export async function POST(request: Request) {
       warehouse: payload.warehouse.trim(),
       pickupNumber: payload.pickupNumber.trim(),
       boxes,
-      product: directItems.length > 1 ? `${primary.product} + ${directItems.length - 1} partida(s)` : primary?.product || (payload.product ?? "").trim(),
-      presentation: directItems.length > 1 ? null : primary?.presentation || payload.presentation?.trim() || null,
-      size: directItems.length > 1 ? null : primary?.size || payload.size?.trim() || null,
-      label: directItems.length > 1 ? null : primary?.label || payload.label?.trim() || null,
-      purchasePrice: directItems.length > 1 ? null : primary?.purchasePrice ?? (Number.isFinite(purchasePrice) ? purchasePrice : null),
-      salePrice: directItems.length > 1 ? null : primary?.unitPrice ?? (Number.isFinite(salePrice) ? salePrice : null),
+      product: lineItems.length > 1 ? `${primary.product} + ${lineItems.length - 1} partida(s)` : primary?.product || (payload.product ?? "").trim(),
+      presentation: lineItems.length > 1 ? null : primary?.presentation || payload.presentation?.trim() || null,
+      size: lineItems.length > 1 ? null : primary?.size || payload.size?.trim() || null,
+      label: lineItems.length > 1 ? null : primary?.label || payload.label?.trim() || null,
+      purchasePrice: lineItems.length > 1 ? null : primary?.purchasePrice ?? (Number.isFinite(purchasePrice) ? purchasePrice : null),
+      salePrice: lineItems.length > 1 ? null : primary?.unitPrice ?? (Number.isFinite(salePrice) ? salePrice : null),
       profit,
       shipDate: payload.shipDate || null,
       shipTo: typeof payload.shipTo === "string" ? payload.shipTo.trim() || null : null,
@@ -137,9 +189,16 @@ export async function POST(request: Request) {
       loadStatus: payload.loadStatus?.trim() || "OK",
       paymentStatus: "PENDIENTE",
       invoiceNumber: payload.invoiceNumber?.trim() || null,
-      invoiceItems: directItems.length ? JSON.stringify(directItems) : null,
+      invoiceItems: lineItems.length ? JSON.stringify(lineItems) : null,
     }).returning();
-    if (inventoryLotId) {
+    if (operationType === "IMPORTED_INVENTORY" && lineItems.some((item) => item.inventoryLotId)) {
+      for (const item of lineItems) {
+        if (!item.inventoryLotId) continue;
+        await db.update(inventoryLots)
+          .set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${item.quantity}` })
+          .where(and(eq(inventoryLots.id, item.inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, item.quantity)));
+      }
+    } else if (inventoryLotId) {
       await db.update(inventoryLots)
         .set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${boxes}` })
         .where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, boxes)));
@@ -171,9 +230,9 @@ export async function PATCH(request: Request) {
       const [sale] = await db.update(sales).set({ canceledAt, canceledBy, cancellationReason, cancellationDetail: cancellationReason })
         .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.canceledAt))).returning();
       if (!sale) return Response.json({ error: "La venta ya fue cancelada." }, { status: 409 });
-      if (existing.operationType === "IMPORTED_INVENTORY" && existing.inventoryLotId) {
-        await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${existing.boxes}` })
-          .where(and(eq(inventoryLots.id, existing.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+      for (const allocation of inventoryAllocationsFor(existing)) {
+        await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${allocation.quantity}` })
+          .where(and(eq(inventoryLots.id, allocation.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
       }
       return Response.json({ sale });
     }
@@ -202,19 +261,58 @@ export async function PATCH(request: Request) {
       if (operationType === "DIRECT_RESALE" && (!directItems.length || directItems.length > 25 || directItems.some((item) => !item.product || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.purchasePrice) || item.purchasePrice < 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0))) {
         return Response.json({ error: "Revisa productos, bultos/cajas, precio de compra y precio de venta." }, { status: 400 });
       }
-      const boxes = directItems.length ? directItems.reduce((sum, item) => sum + item.quantity, 0) : Number(payload.boxes);
-      const salePrice = directItems.length === 1 ? directItems[0].unitPrice : Number(payload.salePrice);
+      let lineItems: InvoiceItem[] = directItems;
+      let inventoryLotId: number | null = null;
+      const oldAllocations = inventoryAllocationsFor(existing);
+      if (operationType === "IMPORTED_INVENTORY" && Array.isArray(payload.items) && payload.items.length) {
+        const requestedItems = (payload.items as InvoiceItem[]).map((item) => ({
+          inventoryLotId: Number(item.inventoryLotId),
+          quantity: Number(item.quantity),
+          unitPrice: Number(item.unitPrice),
+        }));
+        if (requestedItems.length > 25 || requestedItems.some((item) => !Number.isInteger(item.inventoryLotId) || item.inventoryLotId <= 0 || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) {
+          return Response.json({ error: "Revisa productos, bultos/cajas y precio de venta del inventario." }, { status: 400 });
+        }
+        const oldByLot = oldAllocations.reduce((map, item) => map.set(item.inventoryLotId, (map.get(item.inventoryLotId) || 0) + item.quantity), new Map<number, number>());
+        const importedItems: InvoiceItem[] = [];
+        for (const item of requestedItems) {
+          const [lot] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, item.inventoryLotId), eq(inventoryLots.organizationCode, "USA"))).limit(1);
+          if (!lot) return Response.json({ error: "No se encontrÃ³ una partida de inventario seleccionada." }, { status: 404 });
+          const usableBoxes = lot.availableBoxes + (oldByLot.get(lot.id) || 0);
+          if (usableBoxes < item.quantity) return Response.json({ error: `La partida ${lot.pickupNumber || lot.product} sÃ³lo tiene ${usableBoxes} cajas disponibles para esta venta.` }, { status: 409 });
+          importedItems.push({
+            inventoryLotId: lot.id,
+            product: lot.product,
+            presentation: lot.presentation || "",
+            size: lot.size || "",
+            label: lot.label || "",
+            quantity: item.quantity,
+            purchasePrice: lot.unitCost ?? 0,
+            unitPrice: item.unitPrice,
+          });
+        }
+        lineItems = importedItems;
+        inventoryLotId = importedItems[0]?.inventoryLotId ?? null;
+        const firstItem = importedItems[0];
+        if (firstItem) {
+          payload.product = product || firstItem.product;
+          payload.presentation = text(payload.presentation) || firstItem.presentation || "";
+          payload.size = text(payload.size) || firstItem.size || "";
+          payload.label = text(payload.label) || firstItem.label || "";
+        }
+      }
+      const boxes = lineItems.length ? lineItems.reduce((sum, item) => sum + item.quantity, 0) : Number(payload.boxes);
+      const salePrice = lineItems.length === 1 ? lineItems[0].unitPrice : Number(payload.salePrice);
       if (!Number.isInteger(boxes) || boxes <= 0) return Response.json({ error: "La cantidad de cajas debe ser un entero mayor que cero." }, { status: 400 });
-      if (!directItems.length && (!Number.isFinite(salePrice) || salePrice < 0)) return Response.json({ error: "Ingresa un precio de venta válido." }, { status: 400 });
+      if (!lineItems.length && (!Number.isFinite(salePrice) || salePrice < 0)) return Response.json({ error: "Ingresa un precio de venta valido." }, { status: 400 });
 
       if (operationType !== existing.operationType) return Response.json({ error: "El tipo de operación de una venta existente no puede cambiarse." }, { status: 400 });
 
-      let inventoryLotId: number | null = null;
       let purchasePrice = payload.purchasePrice == null || payload.purchasePrice === "" ? null : Number(payload.purchasePrice);
       if (operationType === "DIRECT_RESALE" && !directItems.length && (purchasePrice == null || !Number.isFinite(purchasePrice) || purchasePrice < 0)) {
         return Response.json({ error: "Ingresa un precio de compra válido." }, { status: 400 });
       }
-      if (operationType === "IMPORTED_INVENTORY") {
+      if (operationType === "IMPORTED_INVENTORY" && !lineItems.length) {
         inventoryLotId = Number(payload.inventoryLotId);
         if (!Number.isInteger(inventoryLotId) || inventoryLotId <= 0) return Response.json({ error: "Selecciona una partida disponible del inventario." }, { status: 400 });
         const [lot] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"))).limit(1);
@@ -236,10 +334,21 @@ export async function PATCH(request: Request) {
           }
         }
       }
+      if (operationType === "IMPORTED_INVENTORY" && lineItems.some((item) => item.inventoryLotId)) {
+        for (const allocation of oldAllocations) {
+          await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${allocation.quantity}` })
+            .where(and(eq(inventoryLots.id, allocation.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+        }
+        for (const item of lineItems) {
+          if (!item.inventoryLotId) continue;
+          await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${item.quantity}` })
+            .where(and(eq(inventoryLots.id, item.inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, item.quantity)));
+        }
+      }
 
-      const total = directItems.length ? directItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) : boxes * salePrice;
-      const profit = directItems.length ? directItems.reduce((sum, item) => sum + (item.unitPrice - item.purchasePrice) * item.quantity, 0) : purchasePrice == null ? null : (salePrice - purchasePrice) * boxes;
-      const primary = directItems[0];
+      const total = lineItems.length ? lineItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) : boxes * salePrice;
+      const profit = lineItems.length ? lineItems.reduce((sum, item) => sum + (item.unitPrice - Number(item.purchasePrice ?? 0)) * item.quantity, 0) : purchasePrice == null ? null : (salePrice - purchasePrice) * boxes;
+      const primary = lineItems[0];
       const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
       const [sale] = await db.update(sales).set({
         supplier: text(payload.supplier) || null,
@@ -251,19 +360,19 @@ export async function PATCH(request: Request) {
         warehouse,
         pickupNumber,
         boxes,
-        product: directItems.length > 1 ? `${primary.product} + ${directItems.length - 1} partida(s)` : primary?.product || product,
-        presentation: directItems.length > 1 ? null : primary?.presentation || text(payload.presentation) || null,
-        size: directItems.length > 1 ? null : primary?.size || text(payload.size) || null,
-        label: directItems.length > 1 ? null : primary?.label || text(payload.label) || null,
-        purchasePrice: directItems.length > 1 ? null : primary?.purchasePrice ?? purchasePrice,
-        salePrice: directItems.length > 1 ? null : primary?.unitPrice ?? salePrice,
+        product: lineItems.length > 1 ? `${primary.product} + ${lineItems.length - 1} partida(s)` : primary?.product || product,
+        presentation: lineItems.length > 1 ? null : primary?.presentation || text(payload.presentation) || null,
+        size: lineItems.length > 1 ? null : primary?.size || text(payload.size) || null,
+        label: lineItems.length > 1 ? null : primary?.label || text(payload.label) || null,
+        purchasePrice: lineItems.length > 1 ? null : primary?.purchasePrice ?? purchasePrice,
+        salePrice: lineItems.length > 1 ? null : primary?.unitPrice ?? salePrice,
         profit,
         shipDate: null,
         shipTo: text(payload.shipTo) || null,
         pickupDate,
         total,
         dueDate,
-        invoiceItems: directItems.length ? JSON.stringify(directItems) : null,
+        invoiceItems: lineItems.length ? JSON.stringify(lineItems) : null,
       }).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.invoiceNumber))).returning();
       if (!sale) return Response.json({ error: "La venta fue facturada mientras se editaba y ya no puede modificarse." }, { status: 409 });
       return Response.json({ sale });

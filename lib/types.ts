@@ -62,6 +62,7 @@ export type InvoiceAdjustment = {
 };
 
 export type InvoiceItem = {
+  inventoryLotId?: number;
   product: string;
   presentation: string;
   size: string;
