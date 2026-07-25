@@ -249,6 +249,15 @@ export async function PATCH(request: Request) {
           updatedLots.push(lot);
         }
       }
+      const keptIds = new Set(updatedLots.map((lot) => lot.id));
+      const removedIds = itemIds.filter((itemId) => !keptIds.has(itemId));
+      for (const removedId of removedIds) {
+        const [currentLot] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, removedId), eq(inventoryLots.organizationCode, "USA"))).limit(1);
+        if (!currentLot) continue;
+        const soldBoxes = currentLot.totalBoxes - currentLot.availableBoxes;
+        if (soldBoxes > 0) return Response.json({ error: `No se puede eliminar ${currentLot.product} porque ya tiene cajas vendidas.` }, { status: 409 });
+        await db.delete(inventoryLots).where(and(eq(inventoryLots.id, removedId), eq(inventoryLots.organizationCode, "USA")));
+      }
       return Response.json({ lot: updatedLots[0], lots: updatedLots, totalImportCost: purchaseTotal + fixedImportCost });
     }
 
