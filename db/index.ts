@@ -50,6 +50,7 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
       us_customs_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
       overweight_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
       red_light_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+      red_light_us_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
       cold_storage TEXT,
       cold_storage_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
       additional_expenses TEXT NOT NULL DEFAULT '[]',
@@ -215,6 +216,7 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS attachments TEXT NOT NULL DEFAULT '[]'`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS cost_attachments TEXT NOT NULL DEFAULT '{}'`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS received_confirmed_at TEXT`;
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS red_light_us_cost DOUBLE PRECISION NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS state_code TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS state_name TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT ''`;

@@ -60,7 +60,13 @@ export async function POST(request: Request) {
     const invoiceNumber = String(highest + 1).padStart(4, "0");
     const extension = bol.type === "application/pdf" ? "pdf" : bol.type.split("/")[1] || "bin";
     uploadedKey = `usa/bol/${saleId}/${crypto.randomUUID()}.${extension}`;
-    await getBucket().put(uploadedKey, bol.stream(), { httpMetadata: { contentType: bol.type }, customMetadata: { saleId: String(saleId), originalName: bol.name } });
+    try {
+      await getBucket().put(uploadedKey, bol.stream(), { httpMetadata: { contentType: bol.type }, customMetadata: { saleId: String(saleId), originalName: bol.name } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("Vercel Blob")) throw error;
+      uploadedKey = null;
+    }
 
     let saleItems: InvoiceItem[] = [];
     try { saleItems = JSON.parse(existing.invoiceItems || "[]") as InvoiceItem[]; } catch { saleItems = []; }

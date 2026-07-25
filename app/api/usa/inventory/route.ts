@@ -41,6 +41,7 @@ function inventoryItemsFromPayload(payload: Record<string, unknown>) {
       totalBoxes: Number(row.totalBoxes),
       boxesPerPallet: row.boxesPerPallet === "" || row.boxesPerPallet == null ? null : Number(row.boxesPerPallet),
       purchasePrice: row.purchasePrice === "" || row.purchasePrice == null ? NaN : Number(row.purchasePrice),
+      purchaseCurrency: row.purchaseCurrency === "USD" ? "USD" : "MXN",
     };
   });
 }
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
     const usCustomsCost = amount("usCustomsCost");
     const overweightCost = amount("overweightCost");
     const redLightCost = amount("redLightCost");
+    const redLightUsCost = amount("redLightUsCost");
     const coldStorageCost = amount("coldStorageCost");
     const additionalExpenses = Array.isArray(payload.additionalExpenses)
       ? payload.additionalExpenses.map((item) => {
@@ -72,7 +74,7 @@ export async function POST(request: Request) {
     if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !items.length || items.some((item) => !item.product || !Number.isInteger(item.totalBoxes) || item.totalBoxes <= 0)) {
       return Response.json({ error: "Completa fecha de entrada, bodega, productos y cajas recibidas." }, { status: 400 });
     }
-    const values = [freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...items.map((item) => item.purchasePrice), ...additionalExpenses.map((item) => item.amount)];
+    const values = [freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, redLightUsCost, coldStorageCost, ...items.map((item) => item.purchasePrice), ...additionalExpenses.map((item) => item.amount)];
     if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes validos en los costos de importacion." }, { status: 400 });
     if (!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
       return Response.json({ error: "Ingresa el tipo de cambio valido de esta importacion para calcular los totales en USD y MXN." }, { status: 400 });
@@ -80,20 +82,23 @@ export async function POST(request: Request) {
     if (items.some((item) => item.boxesPerPallet != null && (!Number.isInteger(item.boxesPerPallet) || item.boxesPerPallet <= 0))) {
       return Response.json({ error: "Cajas por pallet debe ser un numero entero mayor que cero." }, { status: 400 });
     }
-    const purchaseTotal = items.reduce((sum, item) => sum + item.purchasePrice * item.totalBoxes, 0);
+    const itemPurchaseUsd = (item: (typeof items)[number]) => toUsd(item.purchasePrice, item.purchaseCurrency);
+    const purchaseTotal = items.reduce((sum, item) => sum + itemPurchaseUsd(item) * item.totalBoxes, 0);
     const fixedImportCost = toUsd(freightCost, currency("freightCost"))
       + toUsd(mexicoCustomsCost, currency("mexicoCustomsCost"))
       + toUsd(usCustomsCost, currency("usCustomsCost"))
       + toUsd(overweightCost, currency("overweightCost"))
       + toUsd(redLightCost, currency("redLightCost"))
+      + toUsd(redLightUsCost, currency("redLightUsCost"))
       + toUsd(coldStorageCost, currency("coldStorageCost"))
       + additionalExpenses.reduce((sum, item) => sum + toUsd(item.amount, item.currency), 0);
     const totalImportCost = purchaseTotal + fixedImportCost;
     const fixedCostPerBox = totalBoxes ? fixedImportCost / totalBoxes : 0;
-    const sharedCurrencies = JSON.stringify(Object.fromEntries(["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"].map((key) => [key, currency(key)])));
+    const sharedCurrencies = Object.fromEntries(["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "redLightUsCost", "coldStorageCost"].map((key) => [key, currency(key)]));
     const db = await getDb();
     const insertedLots = await db.insert(inventoryLots).values(items.map((item) => {
-      const itemTotalImportCost = item.purchasePrice * item.totalBoxes + fixedCostPerBox * item.totalBoxes;
+      const purchasePrice = itemPurchaseUsd(item);
+      const itemTotalImportCost = purchasePrice * item.totalBoxes + fixedCostPerBox * item.totalBoxes;
       return {
         organizationCode: "USA",
         receivedDate: clean(payload.receivedDate),
@@ -109,19 +114,20 @@ export async function POST(request: Request) {
         boxesPerPallet: item.boxesPerPallet,
         palletsPerLoad: null,
         availableBoxes: item.totalBoxes,
-        unitCost: item.purchasePrice + fixedCostPerBox,
-        purchasePrice: item.purchasePrice,
+        unitCost: purchasePrice + fixedCostPerBox,
+        purchasePrice,
         freightCost,
         mexicoCustomsCost,
         usCustomsCost,
         overweightCost,
         redLightCost,
+        redLightUsCost,
         coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
         coldStorageCost,
         additionalExpenses: JSON.stringify(additionalExpenses),
         attachments: JSON.stringify(attachments),
         costAttachments: JSON.stringify(costAttachments),
-        costCurrencies: sharedCurrencies,
+        costCurrencies: JSON.stringify({ ...sharedCurrencies, purchasePrice: item.purchaseCurrency }),
         exchangeRate,
         totalImportCost: itemTotalImportCost,
         receivedConfirmedAt: null,
@@ -149,6 +155,103 @@ export async function PATCH(request: Request) {
     }
     if (existing.availableBoxes <= 0) return Response.json({ error: "Esta partida ya fue facturada por completo y no puede editarse." }, { status: 409 });
 
+    if (Array.isArray(payload.items)) {
+      const items = inventoryItemsFromPayload(payload);
+      const totalBoxes = items.reduce((sum, item) => sum + (Number.isFinite(item.totalBoxes) ? item.totalBoxes : 0), 0);
+      const itemIds = Array.isArray(payload.itemIds) ? payload.itemIds.map(Number).filter((itemId) => Number.isInteger(itemId) && itemId > 0) : [id];
+      const exchangeRate = payload.exchangeRate === "" || payload.exchangeRate == null ? null : Number(payload.exchangeRate);
+      const rawCurrencies = payload.costCurrencies && typeof payload.costCurrencies === "object" ? payload.costCurrencies as Record<string, unknown> : {};
+      const currency = (key: string) => rawCurrencies[key] === "MXN" ? "MXN" : "USD";
+      const toUsd = (value: number, selectedCurrency: string) => selectedCurrency === "MXN" ? value / (exchangeRate || 0) : value;
+      const amount = (key: string) => payload[key] === "" || payload[key] == null ? 0 : Number(payload[key]);
+      const freightCost = amount("freightCost");
+      const mexicoCustomsCost = amount("mexicoCustomsCost");
+      const usCustomsCost = amount("usCustomsCost");
+      const overweightCost = amount("overweightCost");
+      const redLightCost = amount("redLightCost");
+      const redLightUsCost = amount("redLightUsCost");
+      const coldStorageCost = amount("coldStorageCost");
+      const additionalExpenses = Array.isArray(payload.additionalExpenses)
+        ? payload.additionalExpenses.map((item) => {
+            const expense = item as Record<string, unknown>;
+            return { concept: clean(expense.concept), amount: Number(expense.amount) || 0, currency: expense.currency === "MXN" ? "MXN" : "USD" };
+          }).filter((item) => item.concept || item.amount)
+        : [];
+      if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !items.length || items.some((item) => !item.product || !Number.isInteger(item.totalBoxes) || item.totalBoxes <= 0)) {
+        return Response.json({ error: "Completa fecha de entrada, bodega, productos y cajas recibidas." }, { status: 400 });
+      }
+      const values = [freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, redLightUsCost, coldStorageCost, ...items.map((item) => item.purchasePrice), ...additionalExpenses.map((item) => item.amount)];
+      if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes validos en los costos de importacion." }, { status: 400 });
+      if (!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+        return Response.json({ error: "Ingresa el tipo de cambio valido de esta importacion para calcular los totales en USD y MXN." }, { status: 400 });
+      }
+      if (items.some((item) => item.boxesPerPallet != null && (!Number.isInteger(item.boxesPerPallet) || item.boxesPerPallet <= 0))) {
+        return Response.json({ error: "Cajas por pallet debe ser un numero entero mayor que cero." }, { status: 400 });
+      }
+      const itemPurchaseUsd = (item: (typeof items)[number]) => toUsd(item.purchasePrice, item.purchaseCurrency);
+      const purchaseTotal = items.reduce((sum, item) => sum + itemPurchaseUsd(item) * item.totalBoxes, 0);
+      const fixedImportCost = toUsd(freightCost, currency("freightCost"))
+        + toUsd(mexicoCustomsCost, currency("mexicoCustomsCost"))
+        + toUsd(usCustomsCost, currency("usCustomsCost"))
+        + toUsd(overweightCost, currency("overweightCost"))
+        + toUsd(redLightCost, currency("redLightCost"))
+        + toUsd(redLightUsCost, currency("redLightUsCost"))
+        + toUsd(coldStorageCost, currency("coldStorageCost"))
+        + additionalExpenses.reduce((sum, item) => sum + toUsd(item.amount, item.currency), 0);
+      const fixedCostPerBox = totalBoxes ? fixedImportCost / totalBoxes : 0;
+      const sharedCurrencies = Object.fromEntries(["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "redLightUsCost", "coldStorageCost"].map((key) => [key, currency(key)]));
+      const updatedLots = [];
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        const itemId = itemIds[index];
+        const purchasePrice = itemPurchaseUsd(item);
+        const itemTotalImportCost = purchasePrice * item.totalBoxes + fixedCostPerBox * item.totalBoxes;
+        const valuesForLot = {
+          organizationCode: "USA",
+          loadDate: clean(payload.loadDate) || null,
+          receivedDate: clean(payload.receivedDate),
+          supplier: clean(payload.supplier) || null,
+          warehouse: clean(payload.warehouse),
+          pickupNumber: clean(payload.pickupNumber) || null,
+          product: item.product,
+          presentation: item.presentation || null,
+          size: item.size || null,
+          label: item.label || null,
+          totalBoxes: item.totalBoxes,
+          boxesPerPallet: item.boxesPerPallet,
+          palletsPerLoad: null,
+          unitCost: purchasePrice + fixedCostPerBox,
+          purchasePrice,
+          freightCost,
+          mexicoCustomsCost,
+          usCustomsCost,
+          overweightCost,
+          redLightCost,
+          redLightUsCost,
+          coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
+          coldStorageCost,
+          additionalExpenses: JSON.stringify(additionalExpenses),
+          attachments: JSON.stringify(Array.isArray(payload.attachments) ? payload.attachments : []),
+          costAttachments: JSON.stringify(payload.costAttachments && typeof payload.costAttachments === "object" ? payload.costAttachments : {}),
+          costCurrencies: JSON.stringify({ ...sharedCurrencies, purchasePrice: item.purchaseCurrency }),
+          exchangeRate,
+          totalImportCost: itemTotalImportCost,
+        };
+        if (itemId) {
+          const [currentLot] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, itemId), eq(inventoryLots.organizationCode, "USA"))).limit(1);
+          if (!currentLot) return Response.json({ error: "No se encontro una partida de la carga." }, { status: 404 });
+          const soldBoxes = currentLot.totalBoxes - currentLot.availableBoxes;
+          if (item.totalBoxes < soldBoxes) return Response.json({ error: `El producto ${item.product} no puede quedar con menos cajas que las ya vendidas.` }, { status: 409 });
+          const [lot] = await db.update(inventoryLots).set({ ...valuesForLot, availableBoxes: item.totalBoxes - soldBoxes }).where(and(eq(inventoryLots.id, itemId), eq(inventoryLots.organizationCode, "USA"))).returning();
+          updatedLots.push(lot);
+        } else {
+          const [lot] = await db.insert(inventoryLots).values({ ...valuesForLot, availableBoxes: item.totalBoxes, receivedConfirmedAt: existing.receivedConfirmedAt }).returning();
+          updatedLots.push(lot);
+        }
+      }
+      return Response.json({ lot: updatedLots[0], lots: updatedLots, totalImportCost: purchaseTotal + fixedImportCost });
+    }
+
     const totalBoxes = Number(payload.totalBoxes);
     const boxesPerPallet = payload.boxesPerPallet === "" || payload.boxesPerPallet == null ? null : Number(payload.boxesPerPallet);
     const palletsPerLoad = payload.palletsPerLoad === "" || payload.palletsPerLoad == null ? null : Number(payload.palletsPerLoad);
@@ -163,6 +266,7 @@ export async function PATCH(request: Request) {
     const usCustomsCost = amount("usCustomsCost");
     const overweightCost = amount("overweightCost");
     const redLightCost = amount("redLightCost");
+    const redLightUsCost = amount("redLightUsCost");
     const coldStorageCost = amount("coldStorageCost");
     const additionalExpenses = Array.isArray(payload.additionalExpenses)
       ? payload.additionalExpenses.map((item) => {
@@ -173,7 +277,7 @@ export async function PATCH(request: Request) {
     if (!clean(payload.receivedDate) || !clean(payload.warehouse) || !clean(payload.product) || !Number.isInteger(totalBoxes) || totalBoxes <= 0) {
       return Response.json({ error: "Completa fecha de entrada, bodega, producto y cajas recibidas." }, { status: 400 });
     }
-    const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
+    const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, redLightUsCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
     if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes vÃ¡lidos en los costos de importaciÃ³n." }, { status: 400 });
     if (!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
       return Response.json({ error: "Ingresa el tipo de cambio vÃ¡lido de esta importaciÃ³n para calcular los totales en USD y MXN." }, { status: 400 });
@@ -190,6 +294,7 @@ export async function PATCH(request: Request) {
       + toUsd(usCustomsCost, currency("usCustomsCost"))
       + toUsd(overweightCost, currency("overweightCost"))
       + toUsd(redLightCost, currency("redLightCost"))
+      + toUsd(redLightUsCost, currency("redLightUsCost"))
       + toUsd(coldStorageCost, currency("coldStorageCost"))
       + additionalExpenses.reduce((sum, item) => sum + toUsd(item.amount, item.currency), 0);
     const unitCost = totalImportCost / totalBoxes;
@@ -215,12 +320,13 @@ export async function PATCH(request: Request) {
       usCustomsCost,
       overweightCost,
       redLightCost,
+      redLightUsCost,
       coldStorage: clean(payload.coldStorage) || clean(payload.warehouse) || null,
       coldStorageCost,
       additionalExpenses: JSON.stringify(additionalExpenses),
       attachments: JSON.stringify(Array.isArray(payload.attachments) ? payload.attachments : []),
       costAttachments: JSON.stringify(payload.costAttachments && typeof payload.costAttachments === "object" ? payload.costAttachments : {}),
-      costCurrencies: JSON.stringify(Object.fromEntries(["purchasePrice", "freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"].map((key) => [key, currency(key)]))),
+      costCurrencies: JSON.stringify(Object.fromEntries(["purchasePrice", "freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "redLightUsCost", "coldStorageCost"].map((key) => [key, currency(key)]))),
       exchangeRate,
       totalImportCost,
     }).where(and(eq(inventoryLots.id, id), eq(inventoryLots.organizationCode, "USA"))).returning();

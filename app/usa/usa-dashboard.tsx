@@ -19,7 +19,8 @@ type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
-type InventoryEntryItem = { product: string; presentation: string; size: string; label: string; totalBoxes: string; boxesPerPallet: string; purchasePrice: string };
+type InventoryEntryItem = { product: string; presentation: string; size: string; label: string; totalBoxes: string; boxesPerPallet: string; purchasePrice: string; purchaseCurrency: Currency };
+type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
@@ -169,10 +170,10 @@ const blankPartner = {
 const blankInventory = {
   loadDate: "", receivedDate: localDateKey(), supplier: "", warehouse: "", pickupNumber: "", product: "", presentation: "", size: "", label: "", totalBoxes: "",
   boxesPerPallet: "", palletsPerLoad: "", exchangeRate: "",
-  purchasePrice: "", freightCost: "", mexicoCustomsCost: "", usCustomsCost: "", overweightCost: "", redLightCost: "", coldStorage: "", coldStorageCost: "",
+  purchasePrice: "", freightCost: "", mexicoCustomsCost: "", usCustomsCost: "", overweightCost: "", redLightCost: "", redLightUsCost: "", coldStorage: "", coldStorageCost: "",
   attachments: [] as string[], costAttachments: {} as Record<CostKey, string[]>,
 };
-const blankInventoryItem: InventoryEntryItem = { product: "", presentation: "", size: "", label: "", totalBoxes: "", boxesPerPallet: "", purchasePrice: "" };
+const blankInventoryItem: InventoryEntryItem = { product: "", presentation: "", size: "", label: "", totalBoxes: "", boxesPerPallet: "", purchasePrice: "", purchaseCurrency: "MXN" };
 
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "", boxesPerPallet: "" };
 const blankColdStorage = { name: "", address: "", phone: "", stateCode: "", stateName: "", city: "", street: "", exteriorNumber: "", interiorNumber: "", postalCode: "" };
@@ -182,9 +183,9 @@ const PERMISSION_OPTIONS = [
   ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
 ] as const;
 type Currency = "USD" | "MXN";
-type CostKey = "purchasePrice" | "freightCost" | "mexicoCustomsCost" | "usCustomsCost" | "overweightCost" | "redLightCost" | "coldStorageCost";
+type CostKey = "purchasePrice" | "freightCost" | "mexicoCustomsCost" | "usCustomsCost" | "overweightCost" | "redLightCost" | "redLightUsCost" | "coldStorageCost";
 const defaultCostCurrencies: Record<CostKey, Currency> = {
-  purchasePrice: "USD", freightCost: "USD", mexicoCustomsCost: "MXN", usCustomsCost: "USD", overweightCost: "USD", redLightCost: "USD", coldStorageCost: "USD",
+  purchasePrice: "MXN", freightCost: "MXN", mexicoCustomsCost: "MXN", usCustomsCost: "USD", overweightCost: "MXN", redLightCost: "MXN", redLightUsCost: "USD", coldStorageCost: "USD",
 };
 type PartnerTarget = "saleSupplier" | "saleCustomer" | "inventorySupplier" | null;
 
@@ -218,9 +219,14 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [citiesLoading, setCitiesLoading] = useState(false);
   const [inventoryModal, setInventoryModal] = useState(false);
   const [editingInventoryId, setEditingInventoryId] = useState<number | null>(null);
+  const [editingInventoryItemIds, setEditingInventoryItemIds] = useState<number[]>([]);
   const [inventoryForm, setInventoryForm] = useState(blankInventory);
   const [inventoryItems, setInventoryItems] = useState<InventoryEntryItem[]>([{ ...blankInventoryItem }]);
   const [inventorySaveState, setInventorySaveState] = useState("");
+  const [inventoryDetailLots, setInventoryDetailLots] = useState<InventoryLot[] | null>(null);
+  const [adminInventoryLot, setAdminInventoryLot] = useState<InventoryLot | null>(null);
+  const [adminCredentials, setAdminCredentials] = useState({ email: "", password: "" });
+  const [adminAuthState, setAdminAuthState] = useState("");
   const [invoiceSale, setInvoiceSale] = useState<Sale | null>(null);
   const [invoiceStep, setInvoiceStep] = useState<"closed" | "pickup" | "bol" | "items">("closed");
   const [pickedUp, setPickedUp] = useState<boolean | null>(null);
@@ -546,15 +552,23 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     try {
       const normalizedItems = inventoryItems
         .filter((item) => item.product || item.totalBoxes || item.boxesPerPallet || item.purchasePrice)
-        .map((item) => ({ ...item, totalBoxes: Number(item.totalBoxes), boxesPerPallet: item.boxesPerPallet, purchasePrice: Number(item.purchasePrice) }));
+        .map((item) => ({ ...item, totalBoxes: Number(item.totalBoxes), boxesPerPallet: item.boxesPerPallet, purchasePrice: Number(item.purchasePrice), purchaseCurrency: item.purchaseCurrency }));
       const totalBoxes = normalizedItems.reduce((sum, item) => sum + (Number(item.totalBoxes) || 0), 0);
-      const response = await fetch("/api/usa/inventory", { method: editingInventoryId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...inventoryForm, id: editingInventoryId, items: normalizedItems, totalBoxes, product: normalizedItems[0]?.product || "", presentation: normalizedItems[0]?.presentation || "", size: normalizedItems[0]?.size || "", label: normalizedItems[0]?.label || "", boxesPerPallet: normalizedItems[0]?.boxesPerPallet || "", purchasePrice: normalizedItems[0]?.purchasePrice ?? "", additionalExpenses, costCurrencies }) });
+      const response = await fetch("/api/usa/inventory", { method: editingInventoryId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...inventoryForm, id: editingInventoryId, itemIds: editingInventoryItemIds, items: normalizedItems, totalBoxes, product: normalizedItems[0]?.product || "", presentation: normalizedItems[0]?.presentation || "", size: normalizedItems[0]?.size || "", label: normalizedItems[0]?.label || "", boxesPerPallet: normalizedItems[0]?.boxesPerPallet || "", purchasePrice: normalizedItems[0]?.purchasePrice ?? "", purchaseCurrency: normalizedItems[0]?.purchaseCurrency ?? "MXN", additionalExpenses, costCurrencies }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo registrar la entrada.");
-      setInventory((current) => editingInventoryId ? current.map((lot) => lot.id === data.lot.id ? data.lot : lot) : [...(Array.isArray(data.lots) ? data.lots : [data.lot]), ...current]);
+      const savedLots = Array.isArray(data.lots) ? data.lots as InventoryLot[] : [data.lot as InventoryLot];
+      setInventory((current) => {
+        if (!editingInventoryId) return [...savedLots, ...current];
+        const savedById = new Map(savedLots.map((lot) => [lot.id, lot]));
+        const updated = current.map((lot) => savedById.get(lot.id) || lot);
+        const existingIds = new Set(current.map((lot) => lot.id));
+        return [...savedLots.filter((lot) => !existingIds.has(lot.id)), ...updated];
+      });
       setExpenseConcepts((current) => Array.from(new Map([...current, ...additionalExpenses.map((item) => item.concept.trim()).filter(Boolean)].map((item) => [item.toLocaleLowerCase(), item])).values()).sort((a, b) => a.localeCompare(b)));
       setInventoryModal(false);
       setEditingInventoryId(null);
+      setEditingInventoryItemIds([]);
       setInventorySaveState("");
     } catch (error) {
       setInventorySaveState(error instanceof Error ? error.message : "No se pudo registrar la entrada.");
@@ -563,6 +577,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
   function openInventoryEntry() {
     setEditingInventoryId(null);
+    setEditingInventoryItemIds([]);
     setInventoryForm({ ...blankInventory, receivedDate: localDateKey() });
     setInventoryItems([{ ...blankInventoryItem }]);
     setAdditionalExpenses([]);
@@ -574,8 +589,20 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     void Promise.all([loadCaptureCatalogs(), loadExpenseConcepts()]);
   }
 
+  function inventoryLoadKey(lot: InventoryLot) {
+    return [lot.loadDate || "", lot.receivedDate || "", lot.supplier || "", lot.warehouse || "", lot.coldStorage || "", lot.pickupNumber || ""]
+      .join("::")
+      .toLocaleLowerCase();
+  }
+
+  function relatedInventoryLots(lot: InventoryLot) {
+    const key = inventoryLoadKey(lot);
+    return inventory.filter((item) => inventoryLoadKey(item) === key).sort((a, b) => a.id - b.id);
+  }
+
   function openEditInventoryEntry(lot: InventoryLot) {
     if (lot.availableBoxes <= 0) return;
+    const groupLots = relatedInventoryLots(lot);
     const parsedExpenses = (() => {
       try {
         const value = JSON.parse(lot.additionalExpenses || "[]") as Array<{ concept?: string; amount?: number; currency?: Currency }>;
@@ -591,41 +618,50 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         return defaultCostCurrencies;
       }
     })();
-    setEditingInventoryId(lot.id);
+    setEditingInventoryId(groupLots[0]?.id ?? lot.id);
+    setEditingInventoryItemIds(groupLots.map((item) => item.id));
     setInventoryForm({
-      loadDate: lot.loadDate || "",
-      receivedDate: lot.receivedDate,
-      supplier: lot.supplier || "",
-      warehouse: lot.warehouse,
-      pickupNumber: lot.pickupNumber || "",
-      product: lot.product,
-      presentation: lot.presentation || "",
-      size: lot.size || "",
-      label: lot.label || "",
-      totalBoxes: String(lot.totalBoxes),
-      boxesPerPallet: lot.boxesPerPallet == null ? "" : String(lot.boxesPerPallet),
-      palletsPerLoad: lot.palletsPerLoad == null ? "" : String(lot.palletsPerLoad),
-      exchangeRate: lot.exchangeRate == null ? "" : String(lot.exchangeRate),
-      purchasePrice: lot.purchasePrice == null ? "" : String(lot.purchasePrice),
-      freightCost: String(lot.freightCost || ""),
-      mexicoCustomsCost: String(lot.mexicoCustomsCost || ""),
-      usCustomsCost: String(lot.usCustomsCost || ""),
-      overweightCost: String(lot.overweightCost || ""),
-      redLightCost: String(lot.redLightCost || ""),
-      coldStorage: lot.coldStorage || lot.warehouse,
-      coldStorageCost: String(lot.coldStorageCost || ""),
-      attachments: parseJsonArray(lot.attachments),
-      costAttachments: parseCostAttachmentMap(lot.costAttachments),
+      loadDate: groupLots[0]?.loadDate || lot.loadDate || "",
+      receivedDate: groupLots[0]?.receivedDate || lot.receivedDate,
+      supplier: groupLots[0]?.supplier || lot.supplier || "",
+      warehouse: groupLots[0]?.warehouse || lot.warehouse,
+      pickupNumber: groupLots[0]?.pickupNumber || lot.pickupNumber || "",
+      product: groupLots[0]?.product || lot.product,
+      presentation: groupLots[0]?.presentation || lot.presentation || "",
+      size: groupLots[0]?.size || lot.size || "",
+      label: groupLots[0]?.label || lot.label || "",
+      totalBoxes: String(groupLots.reduce((sum, item) => sum + item.totalBoxes, 0)),
+      boxesPerPallet: groupLots[0]?.boxesPerPallet == null ? "" : String(groupLots[0].boxesPerPallet),
+      palletsPerLoad: "",
+      exchangeRate: groupLots[0]?.exchangeRate == null ? "" : String(groupLots[0].exchangeRate),
+      purchasePrice: groupLots[0]?.purchasePrice == null ? "" : String(groupLots[0].purchasePrice),
+      freightCost: String(groupLots[0]?.freightCost || ""),
+      mexicoCustomsCost: String(groupLots[0]?.mexicoCustomsCost || ""),
+      usCustomsCost: String(groupLots[0]?.usCustomsCost || ""),
+      overweightCost: String(groupLots[0]?.overweightCost || ""),
+      redLightCost: String(groupLots[0]?.redLightCost || ""),
+      redLightUsCost: String(groupLots[0]?.redLightUsCost || ""),
+      coldStorage: groupLots[0]?.coldStorage || groupLots[0]?.warehouse || lot.coldStorage || lot.warehouse,
+      coldStorageCost: String(groupLots[0]?.coldStorageCost || ""),
+      attachments: parseJsonArray(groupLots[0]?.attachments),
+      costAttachments: parseCostAttachmentMap(groupLots[0]?.costAttachments),
     });
-    setInventoryItems([{
-      product: lot.product,
-      presentation: lot.presentation || "",
-      size: lot.size || "",
-      label: lot.label || "",
-      totalBoxes: String(lot.totalBoxes),
-      boxesPerPallet: lot.boxesPerPallet == null ? "" : String(lot.boxesPerPallet),
-      purchasePrice: lot.purchasePrice == null ? "" : String(lot.purchasePrice),
-    }]);
+    setInventoryItems(groupLots.map((item) => {
+      const parsedCurrencies = (() => { try { return JSON.parse(item.costCurrencies || "{}") as Partial<Record<CostKey, Currency>>; } catch { return {}; } })();
+      const purchaseCurrency = parsedCurrencies.purchasePrice === "USD" ? "USD" : "MXN";
+      const exchangeRate = item.exchangeRate || 0;
+      const purchasePrice = purchaseCurrency === "MXN" && exchangeRate && item.purchasePrice != null ? item.purchasePrice * exchangeRate : item.purchasePrice;
+      return {
+        product: item.product,
+        presentation: item.presentation || "",
+        size: item.size || "",
+        label: item.label || "",
+        totalBoxes: String(item.totalBoxes),
+        boxesPerPallet: item.boxesPerPallet == null ? "" : String(item.boxesPerPallet),
+        purchasePrice: purchasePrice == null ? "" : String(purchasePrice),
+        purchaseCurrency,
+      };
+    }));
     setAdditionalExpenses(parsedExpenses);
     setCostCurrencies(parsedCurrencies);
     setTotalBoxesManual(true);
@@ -643,6 +679,41 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       setInventory((current) => current.map((item) => item.id === lot.id ? data.lot : item));
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "No se pudo confirmar la recepción.");
+    }
+  }
+
+  async function receiveInventoryGroup(lots: InventoryLot[]) {
+    for (const lot of lots.filter((item) => !item.receivedConfirmedAt)) {
+      await receiveInventoryEntry(lot);
+    }
+  }
+
+  function requestEditInventoryEntry(lot: InventoryLot) {
+    if (lot.receivedConfirmedAt) {
+      setAdminInventoryLot(lot);
+      setAdminCredentials({ email: "", password: "" });
+      setAdminAuthState("");
+      return;
+    }
+    openEditInventoryEntry(lot);
+  }
+
+  async function authorizeInventoryEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!adminInventoryLot) return;
+    setAdminAuthState("Validando…");
+    try {
+      const response = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adminCredentials) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo validar el administrador.");
+      const permissions = JSON.parse(data.user?.permissions || "[]") as string[];
+      if (!permissions.includes("users") && !permissions.includes("settings")) throw new Error("El usuario no tiene permiso de administrador.");
+      const lot = adminInventoryLot;
+      setAdminInventoryLot(null);
+      setAdminAuthState("");
+      openEditInventoryEntry(lot);
+    } catch (error) {
+      setAdminAuthState(error instanceof Error ? error.message : "No se pudo validar el administrador.");
     }
   }
 
@@ -763,10 +834,10 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     if (event.key !== "Enter" || event.shiftKey) return;
     const target = event.target as HTMLElement;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement) || target.type === "submit") return;
+    event.preventDefault();
     const fields = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("input:not([disabled]):not([readonly]), select:not([disabled])"));
     const index = fields.indexOf(target);
     if (index >= 0 && index < fields.length - 1) {
-      event.preventDefault();
       fields[index + 1].focus();
     }
   }
@@ -1145,15 +1216,21 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
   function chooseInventoryItemProduct(index: number, value: string) {
     if (value === "__new__") return openProductForm("inventory", index);
-    const product = products.find((item) => String(item.id) === value);
+    const product = products.find((item) => item.name === value);
     if (!product) return updateInventoryItem(index, { product: "", presentation: "", size: "", label: "", boxesPerPallet: "" });
-    updateInventoryItem(index, {
-      product: product.name,
-      presentation: product.presentation || "",
-      size: product.size || "",
-      label: product.label || "",
-      boxesPerPallet: product.boxesPerPallet ? String(product.boxesPerPallet) : "",
-    });
+    updateInventoryItem(index, { product: product.name, presentation: "", size: "", label: "", boxesPerPallet: "" });
+  }
+
+  function inventoryItemCatalogValues(productName: string, field: "presentation" | "size" | "label") {
+    return Array.from(new Set(products.filter((product) => product.name === productName).map((product) => product[field] || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }
+
+  function updateInventoryItemVariant(index: number, field: "presentation" | "size" | "label", value: string) {
+    const current = inventoryItems[index];
+    if (!current) return;
+    const next = { ...current, [field]: value };
+    const matching = products.find((product) => product.name === next.product && (product.presentation || "") === next.presentation && (product.size || "") === next.size && (product.label || "") === next.label);
+    updateInventoryItem(index, { [field]: value, boxesPerPallet: matching?.boxesPerPallet ? String(matching.boxesPerPallet) : next.boxesPerPallet });
   }
 
   function addInventoryItem() {
@@ -1283,6 +1360,24 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     .filter((name) => !coldStorages.some((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase()))
     .sort((a, b) => a.localeCompare(b));
   const selectedSaleWarehouse = coldStorages.find((item) => item.name === form.warehouse);
+  const inventoryLoadGroups = useMemo<InventoryLoadGroup[]>(() => {
+    const groups = new Map<string, InventoryLot[]>();
+    inventory.forEach((lot) => {
+      const key = inventoryLoadKey(lot);
+      groups.set(key, [...(groups.get(key) || []), lot]);
+    });
+    return Array.from(groups.entries()).map(([key, lots]) => {
+      const sortedLots = lots.sort((a, b) => a.id - b.id);
+      return {
+        key,
+        lots: sortedLots,
+        first: sortedLots[0],
+        totalBoxes: sortedLots.reduce((sum, lot) => sum + lot.totalBoxes, 0),
+        availableBoxes: sortedLots.reduce((sum, lot) => sum + lot.availableBoxes, 0),
+        allReceived: sortedLots.every((lot) => Boolean(lot.receivedConfirmedAt)),
+      };
+    });
+  }, [inventory]);
   const documentSale = invoicePreview || socPreview;
   const documentItems = documentSale ? (invoicePreview ? originalInvoiceItemsFor(documentSale) : invoiceItemsFor(documentSale)) : [];
   const documentTotal = documentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
@@ -1411,8 +1506,8 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const boxes = inventoryItems.reduce((sum, item) => sum + (Number(item.totalBoxes) || 0), 0);
     const rate = Number(inventoryForm.exchangeRate) || 0;
     const usd = (value: string, currency: Currency) => currency === "MXN" ? (rate ? (Number(value) || 0) / rate : 0) : Number(value) || 0;
-    const purchase = inventoryItems.reduce((sum, item) => sum + (Number(item.purchasePrice) || 0) * (Number(item.totalBoxes) || 0), 0);
-    const fixed = (["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "coldStorageCost"] as CostKey[])
+    const purchase = inventoryItems.reduce((sum, item) => sum + usd(item.purchasePrice, item.purchaseCurrency) * (Number(item.totalBoxes) || 0), 0);
+    const fixed = (["freightCost", "mexicoCustomsCost", "usCustomsCost", "overweightCost", "redLightCost", "redLightUsCost", "coldStorageCost"] as CostKey[])
       .reduce((sum, key) => sum + usd(inventoryForm[key], costCurrencies[key]), 0);
     const extras = additionalExpenses.reduce((sum, item) => sum + usd(item.amount, item.currency), 0);
     const totalUsd = purchase + fixed + extras;
@@ -1442,6 +1537,12 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     if (form.operationType === "DIRECT_RESALE" && (!saleLineItems.length || saleLineItems.some((item) => !item.product || !Number.isInteger(Number(item.quantity)) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.purchasePrice)) || Number(item.purchasePrice) < 0 || !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0))) {
       setSaveState("Agrega al menos un producto y revisa cajas, precio de compra y precio de venta.");
       return;
+    }
+    if (form.operationType === "IMPORTED_INVENTORY" && selectedLot?.unitCost != null && Number(form.salePrice) < selectedLot.unitCost) {
+      const salePrice = Number(form.salePrice) || 0;
+      const loss = selectedLot.unitCost - salePrice;
+      const proceed = window.confirm(`El precio ingresado está por debajo del costo.\nCosto por caja: ${money.format(selectedLot.unitCost)}\nPérdida por caja: ${money.format(loss)}\n\n¿Deseas guardar la venta de todos modos?`);
+      if (!proceed) return;
     }
     const firstLine = saleLineItems[0];
     const directBoxes = saleLineItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -1513,7 +1614,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
               <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} min={localDateKey()} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{row.pickupDate === localDateKey() && <small>Pickup hoy</small>}</td>
               <td>{productCell(row)}</td><td className="numeric">{number.format(row.boxes)}</td>
               <td className="numeric">{invoiceItemsFor(row).length > 1 ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>Varios</button> : row.invoiceNumber ? <button type="button" className="multi-price-button" onClick={() => openProductDetail(row)}>{money.format(invoiceItemsFor(row)[0]?.unitPrice ?? row.salePrice ?? 0)}</button> : row.salePrice == null ? <span className="pending-text">Pend.</span> : money.format(row.salePrice)}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td>
-              <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select disabled={Boolean(row.invoiceNumber)} title={row.invoiceNumber ? "El estatus queda bloqueado al facturar" : undefined} className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" disabled={Boolean(row.invoiceNumber)} className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" title={invoiceEligibilityMessage(row) || "Facturar venta"} onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <><button type="button" className="edit-button" onClick={() => openEditSale(row)}>Edit</button><button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Eliminar</button></> : <span className="muted">—</span>}</div></td>
+              <td>{row.canceledAt ? <div className="cancellation-status"><strong>Cancelada</strong><small>{row.canceledBy} · {row.cancellationReason}</small></div> : <div className="sale-status-cell"><select disabled={Boolean(row.invoiceNumber)} title={row.invoiceNumber ? "El estatus queda bloqueado al facturar" : undefined} className={`status-select ${statusClass(row.loadStatus)}`} aria-label={`Cambiar estatus de ${row.customer}`} value={currentStatusValue(row.loadStatus)} onChange={(event) => void changeLoadStatus(row, event.target.value as LoadStatus)}>{row.loadStatus && !LOAD_STATUS_OPTIONS.includes(row.loadStatus as LoadStatus) && <option value={row.loadStatus} disabled>{row.loadStatus} · anterior</option>}{LOAD_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>{row.loadStatus === "PAS" && <button type="button" disabled={Boolean(row.invoiceNumber)} className={`status-detail-button ${row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "overdue" : ""}`} onClick={() => openStatusModal(row, "PAS")}>{row.pasReviewDueDate && row.pasReviewDueDate <= localDateKey() ? "Revisar PAS vencido" : `Revisar ${formatDate(row.pasReviewDueDate || null)}`}</button>}{row.loadStatus === "USDA REQUESTED" && (row.usdaInspectionStatus === "ATTACHED" && row.usdaInspectionFileName ? <a className="status-detail-button attached" href={`/api/usa/usda-inspections?saleId=${row.id}`} target="_blank" rel="noreferrer">Ver inspección</a> : <button type="button" className="status-detail-button overdue" onClick={() => openStatusModal(row, "USDA REQUESTED")}>Inspección pendiente</button>)}</div>}</td><td>{row.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row)}><span className="invoice-chip invoice-ok">OK</span><small>{row.invoiceNumber}</small></button> : row.canceledAt ? <span className="muted">—</span> : <button type="button" className="invoice-button" title={invoiceEligibilityMessage(row) || "Facturar venta"} onClick={() => openInvoicing(row)}>Facturar</button>}</td><td><div className="row-actions">{!row.invoiceNumber && !row.canceledAt ? <><button type="button" className="edit-button" onClick={() => openEditSale(row)}>Edit</button><button type="button" className="delete-button" onClick={() => openCancelSale(row)}>Delete</button></> : <span className="muted">—</span>}</div></td>
             </tr>; })}</tbody></table></div>
         </section>
       </section>}
@@ -1561,8 +1662,8 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
       {section === "inventory" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Inventario importado</h1></div><button className="primary-button" onClick={openInventoryEntry}>＋ Registrar entrada</button></header>
-        <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Existencias por partida</h2><p>Aquí se da de alta el producto importado que entra a inventario.</p></div><span className="record-count">{inventory.length} partidas</span></div>
-          {inventoryLoading ? <div className="catalog-empty">Consultando inventario…</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de carga</th><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Factura #</th><th>Cold storage</th><th className="numeric">Cajas/pallet</th><th className="numeric">Bultos/cajas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total de importación</th><th className="numeric">Costo real por caja</th><th></th></tr></thead><tbody>{inventory.map((lot) => <tr key={lot.id}><td>{formatDate(lot.loadDate || null)}</td><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.product}</strong><small>{[lot.presentation, lot.size, lot.label].filter(Boolean).join(" · ") || "—"}</small></td><td>{lot.supplier || "—"}</td><td>{lot.pickupNumber || "—"}</td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{lot.boxesPerPallet == null ? "—" : number.format(lot.boxesPerPallet)}</td><td className="numeric">{number.format(lot.totalBoxes)}</td><td className="numeric strong-number">{number.format(lot.availableBoxes)}</td><td className="numeric dual-currency-cell">{lot.totalImportCost == null ? "—" : <><strong>{money.format(lot.totalImportCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(lot.totalImportCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td className="numeric dual-currency-cell">{lot.unitCost == null ? "—" : <><strong>{money.format(lot.unitCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(lot.unitCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td><div className="row-actions">{lot.receivedConfirmedAt ? <span className="status-tag ok">Received</span> : <button type="button" className="edit-button" disabled={lot.availableBoxes <= 0} title={lot.availableBoxes <= 0 ? "Partida facturada por completo" : "Confirmar recepción"} onClick={() => void receiveInventoryEntry(lot)}>Received</button>}<button type="button" className="edit-button" disabled={lot.availableBoxes <= 0} title={lot.availableBoxes <= 0 ? "Partida facturada por completo" : "Edit partida"} onClick={() => openEditInventoryEntry(lot)}>Edit</button></div></td></tr>)}</tbody></table></div>}
+        <section className="sales-panel catalog-panel"><div className="panel-heading"><div><h2>Existencias por partida</h2><p>Aquí se da de alta el producto importado que entra a inventario.</p></div><span className="record-count">{inventoryLoadGroups.length} partidas</span></div>
+          {inventoryLoading ? <div className="catalog-empty">Consultando inventario...</div> : <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha de carga</th><th>Fecha de entrada</th><th>Producto</th><th>Proveedor</th><th>Factura #</th><th>Cold storage</th><th className="numeric">Cajas/pallet</th><th className="numeric">Bultos/cajas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total de importación</th><th className="numeric">Costo real por caja</th><th></th></tr></thead><tbody>{inventoryLoadGroups.map((group) => { const lot = group.first; const aliases = Array.from(new Set(group.lots.map((item) => productAlias(item.product)))); const totalImportCost = group.lots.reduce((sum, item) => sum + (item.totalImportCost || 0), 0); const unitCost = group.totalBoxes ? totalImportCost / group.totalBoxes : lot.unitCost; return <tr key={group.key}><td>{formatDate(lot.loadDate || null)}</td><td>{formatDate(lot.receivedDate)}</td><td><button type="button" className="multi-product-button" onClick={() => setInventoryDetailLots(group.lots)}><strong>{aliases.join(" / ")}</strong><small>{group.lots.length > 1 ? `${group.lots.length} productos - Ver detalle` : [lot.product, lot.presentation, lot.size, lot.label].filter(Boolean).join(" - ") || "N/A"}</small></button></td><td>{lot.supplier || "N/A"}</td><td>{lot.pickupNumber || "N/A"}</td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{group.lots.length > 1 ? "Varios" : lot.boxesPerPallet == null ? "N/A" : number.format(lot.boxesPerPallet)}</td><td className="numeric">{number.format(group.totalBoxes)}</td><td className="numeric strong-number">{number.format(group.availableBoxes)}</td><td className="numeric dual-currency-cell">{totalImportCost ? <><strong>{money.format(totalImportCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(totalImportCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></> : "N/A"}</td><td className="numeric dual-currency-cell">{unitCost == null ? "N/A" : <><strong>{money.format(unitCost)} USD</strong><small>{lot.exchangeRate ? `${moneyMxn.format(unitCost * lot.exchangeRate)} MXN` : "MXN pendiente"}</small></>}</td><td><div className="row-actions">{group.allReceived ? <span className="status-tag ok">Received</span> : <button type="button" className="edit-button" disabled={group.availableBoxes <= 0} title={group.availableBoxes <= 0 ? "Partida facturada por completo" : "Confirmar recepcion"} onClick={() => void receiveInventoryGroup(group.lots)}>Received</button>}<button type="button" className="edit-button" disabled={group.availableBoxes <= 0} title={group.availableBoxes <= 0 ? "Partida facturada por completo" : "Edit partida"} onClick={() => requestEditInventoryEntry(lot)}>Edit</button></div></td></tr>; })}</tbody></table></div>}
           {!inventoryLoading && inventory.length === 0 && <div className="catalog-empty"><strong>Aún no hay entradas de inventario</strong><span>Usa “Registrar entrada” para dar de alta el primer producto importado.</span></div>}
         </section>
       </section>}
@@ -1574,6 +1675,18 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <div className="table-wrap catalog-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Pickup #</th><th>Bodega</th><th>Producto</th><th className="numeric">Total</th><th></th></tr></thead><tbody>{salesRows.filter((row) => !row.invoiceNumber).map((row, index) => <tr className={invoiceSale?.id === row.id ? "selected-invoice-row" : ""} key={row.id ?? index}><td>{formatDate(row.saleDate)}</td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{row.pickupNumber}</td><td>{row.warehouse}</td><td>{row.product}</td><td className="numeric strong-number">{row.total == null ? "—" : money.format(row.total)}</td><td><button type="button" className="invoice-button" title={invoiceEligibilityMessage(row) || "Preparar factura"} onClick={() => openInvoicePreparation(row)}>Preparar factura</button></td></tr>)}</tbody></table></div>
         </section>
       </section>}
+
+      {inventoryDetailLots && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal product-detail-modal">
+        <div className="modal-heading"><div><p className="eyebrow">Inventario importado</p><h2>Detalle de la carga</h2><p className="modal-intro">Factura #{inventoryDetailLots[0]?.pickupNumber || "S/R"} · {inventoryDetailLots[0]?.coldStorage || inventoryDetailLots[0]?.warehouse}</p></div></div>
+        <div className="product-detail-list">{inventoryDetailLots.map((lot) => <article key={lot.id}><span className="product-alias-chip">{productAlias(lot.product)}</span><div><strong>{lot.product}</strong><small>{[lot.size, lot.presentation, lot.label].filter(Boolean).join(" · ") || "Sin detalle"}</small></div><div className="inventory-detail-metrics"><span>Cajas: <strong>{number.format(lot.totalBoxes)}</strong></span><span>Disponibles: <strong>{number.format(lot.availableBoxes)}</strong></span><span>Costo/caja: <strong>{lot.unitCost == null ? "—" : money.format(lot.unitCost)}</strong></span></div></article>)}</div>
+        <div className="modal-actions"><button type="button" className="primary-button" onClick={() => setInventoryDetailLots(null)}>Cerrar</button></div>
+      </section></div>}
+
+      {adminInventoryLot && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal admin-auth-modal" onSubmit={authorizeInventoryEdit}>
+        <div className="modal-heading"><div><p className="eyebrow">Autorización requerida</p><h2>Editar partida recibida</h2><p className="modal-intro">Esta carga ya está marcada como Received. Ingresa credenciales de administrador para abrir la edición.</p></div></div>
+        <section className="form-section"><div className="form-grid"><label>Correo administrador<input required type="email" value={adminCredentials.email} onChange={(event) => setAdminCredentials((current) => ({ ...current, email: event.target.value }))} /></label><label>Contraseña<input required type="password" value={adminCredentials.password} onChange={(event) => setAdminCredentials((current) => ({ ...current, password: event.target.value }))} /></label></div></section>
+        {adminAuthState && <p className="form-message">{adminAuthState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setAdminInventoryLot(null)}>Cancelar</button><button type="submit" className="primary-button">Autorizar</button></div>
+      </form></div>}
 
       {section === "collections" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Cartera</h1></div></header>
@@ -1683,7 +1796,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
             <button type="button" className="operation-choice resale-choice" onClick={() => chooseOperation("DIRECT_RESALE")}><span className="choice-icon">⇄</span><strong>Compra y reventa</strong><small>Registra primero a quién se compró y después a quién se vendió.</small><i>Continuar →</i></button>
             <button type="button" className="operation-choice inventory-choice" onClick={() => chooseOperation("IMPORTED_INVENTORY")}><span className="choice-icon">▦</span><strong>Venta de inventario importado</strong><small>Elige una partida disponible del inventario en USA.</small><i>Ver inventario →</i></button>
           </div><div className="modal-actions"><button type="button" className="secondary-button" onClick={closeModal}>Cancelar</button></div>
-        </section> : <form className="sale-modal sale-modal-wide" onSubmit={saveSale}>
+        </section> : <form className="sale-modal sale-modal-wide" onSubmit={saveSale} onKeyDown={moveToNextField}>
           <div className="modal-heading"><div>{!editingSale && <button type="button" className="back-link" onClick={() => setModalStep("choose")}>← Cambiar tipo</button>}<p className="eyebrow">{form.operationType === "DIRECT_RESALE" ? "Compra y reventa" : "Inventario importado"}</p><h2>{editingSale ? "Editar venta" : "Nueva venta"}</h2>{editingSale && <p className="modal-intro">Modifica los datos de la venta y guarda los cambios.</p>}</div></div>
 
           {form.operationType === "DIRECT_RESALE" ? <>
@@ -1716,9 +1829,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       {inventoryModal && <div className="modal-backdrop"><form className="sale-modal sale-modal-wide" onSubmit={saveInventoryEntry} onKeyDown={moveToNextField}>
         <div className="modal-heading"><div><p className="eyebrow">Inventario importado</p><h2>{editingInventoryId ? "Editar entrada" : "Registrar entrada"}</h2><p className="modal-intro">Esta partida quedará disponible para seleccionarla al registrar una venta de inventario.</p></div></div>
         <section className="form-section inventory-section"><div className="form-section-heading"><span>1</span><div><h3>Datos de la importación</h3></div></div><div className="form-grid">
-          <label>Fecha de carga<input type="date" value={inventoryForm.loadDate} onChange={(e) => setInventoryForm({...inventoryForm, loadDate:e.target.value})} /></label><label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<select value={inventoryForm.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "inventorySupplier") : setInventoryForm({...inventoryForm, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>Factura #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><div className="span-all inventory-entry-items"><div className="inventory-entry-items-heading"><strong>Productos de la carga</strong><button type="button" className="add-expense-button" onClick={addInventoryItem}>+ Agregar producto</button></div>{inventoryItems.map((item, index) => <article key={index}><label><span>Producto</span><select required value={products.find((product) => product.name === item.product && (product.presentation || "") === item.presentation && (product.size || "") === item.size && (product.label || "") === item.label)?.id || ""} onChange={(event) => chooseInventoryItemProduct(index, event.target.value)}><option value="">Selecciona producto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}<option value="__new__">+ Agregar nuevo producto</option></select></label><label><span>Tamaño</span><input value={item.size} readOnly /></label><label><span>Presentación</span><input value={item.presentation} readOnly /></label><label><span>Etiqueta</span><input value={item.label} readOnly /></label><label><span>Cantidad cajas</span><input required min="1" step="1" type="number" value={item.totalBoxes} onChange={(event) => updateInventoryItem(index, { totalBoxes: event.target.value })} /></label><label><span>Cajas por pallet</span><input min="1" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateInventoryItem(index, { boxesPerPallet: event.target.value })} /></label><label><span>Precio compra</span>{moneyField(item.purchasePrice, (value) => updateInventoryItem(index, { purchasePrice: value }), true)}</label><button type="button" className="sale-line-remove" aria-label="Eliminar producto" disabled={inventoryItems.length === 1} onClick={() => setInventoryItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></article>)}</div><label>Total de bultos o cajas *<input name="totalBoxes" required readOnly value={inventoryForm.totalBoxes} /><small className="field-help">Se calcula con la suma de las cajas de los productos agregados.</small></label><div className="span-2 document-inline-upload"><span>Documentos de la carga</span><label className="document-chip-button"><input type="file" multiple onChange={(event) => addInventoryAttachments(event.target.files)} />Seleccionar archivos</label>{inventoryForm.attachments.length > 0 && <small className="attachment-list">{inventoryForm.attachments.join(", ")}</small>}</div></div></section>
+          <label>Fecha de carga<input type="date" value={inventoryForm.loadDate} onChange={(e) => setInventoryForm({...inventoryForm, loadDate:e.target.value})} /></label><label>Fecha de entrada *<input required type="date" value={inventoryForm.receivedDate} onChange={(e) => setInventoryForm({...inventoryForm, receivedDate:e.target.value})} /></label><label>Proveedor<select value={inventoryForm.supplier} onChange={(e) => e.target.value === "__new__" ? void openPartnerForm("SUPPLIER", "inventorySupplier") : setInventoryForm({...inventoryForm, supplier:e.target.value})}><option value="">Selecciona un proveedor</option>{partners.filter((partner) => partner.partnerType === "SUPPLIER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo proveedor</option></select></label><label>Factura #<input value={inventoryForm.pickupNumber} onChange={(e) => setInventoryForm({...inventoryForm, pickupNumber:e.target.value})} /></label><div className="span-all inventory-entry-items"><div className="inventory-entry-items-heading"><strong>Productos de la carga</strong><button type="button" className="add-expense-button" onClick={addInventoryItem}>+ Agregar producto</button></div>{inventoryItems.map((item, index) => { const productNames = Array.from(new Set(products.map((product) => product.name))).sort((a, b) => a.localeCompare(b)); return <article key={index}><label><span>Producto</span><select required value={item.product} onChange={(event) => chooseInventoryItemProduct(index, event.target.value)}><option value="">Selecciona producto</option>{productNames.map((name) => <option key={name} value={name}>{name}</option>)}<option value="__new__">+ Agregar nuevo producto</option></select></label><label><span>Tamaño</span><select disabled={!item.product} value={item.size} onChange={(event) => updateInventoryItemVariant(index, "size", event.target.value)}><option value="">Selecciona</option>{inventoryItemCatalogValues(item.product, "size").map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Presentación</span><select disabled={!item.product} value={item.presentation} onChange={(event) => updateInventoryItemVariant(index, "presentation", event.target.value)}><option value="">Selecciona</option>{inventoryItemCatalogValues(item.product, "presentation").map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Etiqueta</span><select disabled={!item.product} value={item.label} onChange={(event) => updateInventoryItemVariant(index, "label", event.target.value)}><option value="">Selecciona</option>{inventoryItemCatalogValues(item.product, "label").map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Cantidad cajas</span><input required min="1" step="1" type="number" value={item.totalBoxes} onChange={(event) => updateInventoryItem(index, { totalBoxes: event.target.value })} /></label><label><span>Cajas por pallet</span><input min="1" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateInventoryItem(index, { boxesPerPallet: event.target.value })} /></label><label><span>Precio compra</span><span className="money-entry"><span className="dollar-input"><span>$</span><input required min="0" step="0.01" type="number" value={item.purchasePrice} onChange={(event) => updateInventoryItem(index, { purchasePrice: event.target.value })} /></span><select aria-label="Moneda precio compra" value={item.purchaseCurrency} onChange={(event) => updateInventoryItem(index, { purchaseCurrency: event.target.value as Currency })}><option value="MXN">MXN</option><option value="USD">USD</option></select></span></label><button type="button" className="sale-line-remove" aria-label="Eliminar producto" disabled={inventoryItems.length === 1} onClick={() => setInventoryItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>x</button></article>; })}</div><label>Total de bultos o cajas *<input name="totalBoxes" required readOnly value={inventoryForm.totalBoxes} /><small className="field-help">Se calcula con la suma de las cajas de los productos agregados.</small></label><div className="span-2 document-inline-upload"><span>Documentos de la carga</span><label className="document-chip-button"><input type="file" multiple onChange={(event) => addInventoryAttachments(event.target.files)} />Seleccionar archivos</label>{inventoryForm.attachments.length > 0 && <small className="attachment-list">{inventoryForm.attachments.join(", ")}</small>}</div></div></section>
         <section className="form-section cost-section"><div className="form-section-heading"><span>2</span><div><h3>Costos y gastos de importación</h3><p>Los gastos son totales de la carga y se distribuyen entre todos los bultos o cajas.</p></div></div><div className="exchange-rate-row"><label>Tipo de cambio de esta transacción <span>1 USD =</span><input required min="0.0001" step="0.0001" type="number" value={inventoryForm.exchangeRate} onChange={(e) => setInventoryForm({...inventoryForm, exchangeRate:e.target.value})} /><b>MXN</b></label></div><div className="form-grid cost-grid">
-          {costInput("Flete total", "freightCost")}{costInput("Aduana MX total", "mexicoCustomsCost")}{costInput("Aduana US total", "usCustomsCost")}{costInput("Sobrepeso total", "overweightCost")}{costInput("Semáforo rojo total", "redLightCost")}<label>Cold storage de destino *<select required value={selectedColdStorage?.id || ""} onChange={(e) => chooseColdStorage(e.target.value)}><option value="">Selecciona un cold storage</option>{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar nuevo cold storage</option></select>{selectedColdStorage && <small className="field-help">{selectedColdStorage.address} · {formatPhone(selectedColdStorage.phone)}</small>}</label>{costInput("Costo total de cold storage", "coldStorageCost")}
+          {costInput("Flete total", "freightCost")}{costInput("Aduana MX total", "mexicoCustomsCost")}{costInput("Aduana US total", "usCustomsCost")}{costInput("Sobrepeso total", "overweightCost")}{costInput("Semáforo rojo MX", "redLightCost")}{costInput("Semáforo rojo US", "redLightUsCost")}<label>Cold storage de destino *<select required value={selectedColdStorage?.id || ""} onChange={(e) => chooseColdStorage(e.target.value)}><option value="">Selecciona un cold storage</option>{coldStorages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__new__">＋ Agregar nuevo cold storage</option></select>{selectedColdStorage && <small className="field-help">{selectedColdStorage.address} · {formatPhone(selectedColdStorage.phone)}</small>}</label>{costInput("Costo total de cold storage", "coldStorageCost")}
         </div><div className="extra-expenses"><div className="extra-heading"><strong>Otros costos o gastos totales</strong><button type="button" className="add-expense-button" onClick={() => setAdditionalExpenses((current) => [...current, { concept: "", amount: "", currency: "USD" }])}>＋ Agregar gasto</button></div>{additionalExpenses.map((expense, index) => <div className="expense-row" key={index}><div className="expense-concept-field"><input aria-label="Concepto del gasto" placeholder="Concepto" autoComplete="off" value={expense.concept} onFocus={() => setActiveExpenseConcept(index)} onBlur={() => window.setTimeout(() => setActiveExpenseConcept((current) => current === index ? null : current), 120)} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept: e.target.value } : item))} />{activeExpenseConcept === index && expenseConcepts.length > 0 && <div className="expense-concept-menu">{expenseConcepts.filter((concept) => concept.toLocaleLowerCase().includes(expense.concept.toLocaleLowerCase())).map((concept) => <button type="button" key={concept} onMouseDown={(event) => event.preventDefault()} onClick={() => { setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, concept } : item)); setActiveExpenseConcept(null); }}>{concept}</button>)}</div>}</div><span className="dollar-input"><span>$</span><input aria-label="Importe total del gasto" placeholder="Importe total" min="0" step="0.01" type="number" value={expense.amount} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item))} /></span><select aria-label="Moneda del gasto" value={expense.currency} onChange={(e) => setAdditionalExpenses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: e.target.value as Currency } : item))}><option value="USD">USD</option><option value="MXN">MXN</option></select><button type="button" aria-label="Eliminar gasto" onClick={() => setAdditionalExpenses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>
         <div className="import-cost-summary"><span><small>Costo total de importación</small><strong>{money.format(inventoryCostSummary.totalUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.totalMxn)} MXN</b></span><span><small>Costo real por caja</small><strong>{money.format(inventoryCostSummary.unitUsd)} USD</strong><b>{moneyMxn.format(inventoryCostSummary.unitMxn)} MXN</b></span></div></section>
         {inventorySaveState && <p className="form-message">{inventorySaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setInventoryModal(false); setEditingInventoryId(null); }}>Cancelar</button><button type="submit" className="primary-button">{editingInventoryId ? "Guardar cambios" : "Registrar entrada"}</button></div>
@@ -1768,7 +1881,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       </section></div>}
 
       {cancelSale && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal cancellation-modal" onSubmit={confirmCancelSale}>
-        <div className="modal-heading"><div><p className="eyebrow">Conservar historial</p><h2>Eliminar / cancelar venta</h2><p className="modal-intro">La venta y su Sales Order no desaparecerán. Quedarán marcados como cancelados con el motivo registrado.</p></div></div>
+        <div className="modal-heading"><div><p className="eyebrow">Conservar historial</p><h2>Delete / cancelar venta</h2><p className="modal-intro">La venta y su Sales Order no desaparecerán. Quedarán marcados como cancelados con el motivo registrado.</p></div></div>
         <section className="form-section"><div className="cancellation-sale-summary"><strong>{cancelSale.customer}</strong><span>Pickup #{cancelSale.pickupNumber}</span><span>{number.format(cancelSale.boxes)} bultos/cajas</span></div><div className="form-grid">
           <label>¿Quién canceló? *<select required value={cancelParty} onChange={(event) => { const party = event.target.value as "CLIENTE CANCELÓ" | "NW CANCELÓ"; setCancelParty(party); setCancelReason(party === "CLIENTE CANCELÓ" ? "Sin Razón" : "Producto no disponible"); }}><option>CLIENTE CANCELÓ</option><option>NW CANCELÓ</option></select></label>
           <label>Razón *<select required value={cancelReason} onChange={(event) => setCancelReason(event.target.value)}>{(cancelParty === "CLIENTE CANCELÓ" ? customerCancellationReasons : nwCancellationReasons).map((reason) => <option key={reason} value={reason}>{reason}</option>)}</select></label>
@@ -1806,7 +1919,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody>{documentItems.map((item, index) => <tr key={index}><td>{item.product}</td><td>{item.size || "—"}</td><td>{item.label || "—"}</td><td>{item.presentation || "—"}</td><td className="numeric">{number.format(item.quantity)}</td><td className="numeric">{money.format(item.unitPrice)}</td><td className="numeric">{money.format(item.quantity * item.unitPrice)}</td></tr>)}{Array.from({ length: Math.max(0, 5 - documentItems.length) }).map((_, index) => <tr className="empty-item-row" key={`empty-${index}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL:</td><td className="numeric">{money.format(documentTotal)}</td></tr></tfoot></table>
           <p className="amount-words">{amountInWords(documentTotal)}</p>
           <p className="remit-note">Please remit payments to:</p><div className="payment-details"><section><strong>BANKING INFORMATION:</strong><span>Bank: IBC BANK</span><span>Acc. Name: NORWEST PRODUCE LLC</span><span>Acc. Number: 2516358520</span><span>Wire Routing: 114902528</span></section><section><strong>ADDRESS:</strong><span>1 S Broadway St</span><span>McAllen, TX. 78501</span></section></div>
-          {invoicePreview.bolFileName && <a className="invoice-bol-link" href={`/api/usa/invoices?saleId=${invoicePreview.id}`} target="_blank" rel="noreferrer">BOL adjunto: {invoicePreview.bolFileName}</a>}
+          {invoicePreview.bolFileName && (invoicePreview.bolObjectKey ? <a className="invoice-bol-link" href={`/api/usa/invoices?saleId=${invoicePreview.id}`} target="_blank" rel="noreferrer">BOL adjunto: {invoicePreview.bolFileName}</a> : <span className="invoice-bol-link">BOL registrado sin archivo descargable: {invoicePreview.bolFileName}</span>)}
           <p className="document-terms invoice-terms">{INVOICE_TERMS}</p>
         </article>
       </section></div>}

@@ -96,6 +96,7 @@ export type InventoryLot = {
   usCustomsCost: number;
   overweightCost: number;
   redLightCost: number;
+  redLightUsCost?: number;
   coldStorage: string | null;
   coldStorageCost: number;
   additionalExpenses: string;

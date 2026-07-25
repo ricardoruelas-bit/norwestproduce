@@ -26,6 +26,7 @@ export const inventoryLots = pgTable(
     usCustomsCost: doublePrecision("us_customs_cost").notNull().default(0),
     overweightCost: doublePrecision("overweight_cost").notNull().default(0),
     redLightCost: doublePrecision("red_light_cost").notNull().default(0),
+    redLightUsCost: doublePrecision("red_light_us_cost").notNull().default(0),
     coldStorage: text("cold_storage"),
     coldStorageCost: doublePrecision("cold_storage_cost").notNull().default(0),
     additionalExpenses: text("additional_expenses").notNull().default("[]"),
