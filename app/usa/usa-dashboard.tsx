@@ -10,6 +10,7 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
 const number = new Intl.NumberFormat("en-US");
 const quoteNumber = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const quoteInteger = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit", year: "numeric", timeZone: "UTC" });
 const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
@@ -26,6 +27,7 @@ type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: str
 type AdjustmentLineItem = InvoiceItem & { noAdjustment?: boolean };
 type ImportQuoteItem = { product: string; weight: string; weightUnit: "KG" | "LBS"; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; mexicoCostsCurrency: Currency; usCostsUsd: string; usCostsCurrency: Currency; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; overweightCurrency: Currency; otherCostsUsd: string; otherCostsCurrency: Currency; marketPriceUsd: string; exchangeRate: string };
 type ImportQuoteNumberField = "weight" | "pallets" | "boxes" | "boxesPerPallet" | "purchasePriceMxn" | "freightMxn" | "mexicoCostsMxn" | "usCostsUsd" | "inspectionUsd" | "coldStorageUsd" | "overweightMxn" | "otherCostsUsd" | "marketPriceUsd" | "exchangeRate";
+const importQuoteIntegerFields = new Set<ImportQuoteNumberField>(["pallets", "boxes", "boxesPerPallet"]);
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
@@ -75,6 +77,11 @@ function cleanQuoteNumberInput(value: string) {
 function formatQuoteNumberInput(value: string) {
   const parsed = parseQuoteNumber(value);
   return parsed ? quoteNumber.format(parsed) : "";
+}
+
+function formatQuoteIntegerInput(value: string) {
+  const parsed = Math.round(parseQuoteNumber(value));
+  return parsed ? quoteInteger.format(parsed) : "";
 }
 
 function parseJsonArray(value: string | null | undefined) {
@@ -1304,7 +1311,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   }
 
   function formatImportQuoteNumber(index: number, field: ImportQuoteNumberField) {
-    setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: formatQuoteNumberInput(item[field]) } : item));
+    setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: importQuoteIntegerFields.has(field) ? formatQuoteIntegerInput(item[field]) : formatQuoteNumberInput(item[field]) } : item));
   }
 
   function moveToNextQuoteField(event: KeyboardEvent<HTMLElement>) {
@@ -1696,10 +1703,13 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       const importCostBox = boxes ? importTotalUsd / boxes : 0;
       const importCostBoxMxn = boxes ? importTotalMxn / boxes : 0;
       const landedCost = purchaseUsd + importCostBox;
+      const landedCostMxn = rate ? landedCost * rate : 0;
       const marketPrice = parseQuoteNumber(item.marketPriceUsd);
       const profitBox = marketPrice - landedCost;
+      const profitBoxMxn = rate ? profitBox * rate : 0;
       const totalProfit = profitBox * boxes;
-      return { key: `${item.product || "producto"}-${index}`, item, pallets, boxes, calculatedBoxes, purchaseUsd, importTotalUsd, importCostBox, importCostBoxMxn, landedCost, marketPrice, profitBox, totalProfit };
+      const totalProfitMxn = rate ? totalProfit * rate : 0;
+      return { key: `${item.product || "producto"}-${index}`, item, pallets, boxes, calculatedBoxes, purchaseUsd, importTotalUsd, importCostBox, importCostBoxMxn, landedCost, landedCostMxn, marketPrice, profitBox, profitBoxMxn, totalProfit, totalProfitMxn };
     });
     return {
       rows,
@@ -1875,7 +1885,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       </section>}
 
       {section === "importQuote" && <section className="erp-content">
-        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Cotización para Importar</h1></div><button className="primary-button" type="button" onClick={addImportQuoteItem}>＋ Agregar producto</button></header>
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Cotización para Importar</h1></div></header>
         <section className="sales-panel import-quote-panel">
           <div className="panel-heading"><div><h2>Análisis de posible compra en México</h2><p>Consulta interna para estimar costo puesto en USA. No afecta inventario, ventas ni facturación.</p></div><span className="record-count">{importQuoteItems.length} productos</span></div>
           <div className="import-quote-list">{importQuoteItems.map((item, index) => {
@@ -1889,19 +1899,20 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
                   <div className="quote-product-line">
                     <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={item.product} onChange={(event) => updateImportQuoteItem(index, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
                     <label><span>Peso</span><div className="quote-weight-field"><input inputMode="decimal" value={item.weight} onBlur={() => formatImportQuoteNumber(index, "weight")} onChange={(event) => updateImportQuoteNumber(index, "weight", event.target.value)} placeholder="Ej. 50" /><select value={item.weightUnit} onChange={(event) => updateImportQuoteItem(index, { weightUnit: event.target.value as "KG" | "LBS" })}><option value="KG">KG</option><option value="LBS">LBS</option></select></div></label>
+                    <button className="primary-button quote-add-product-button" type="button" onClick={addImportQuoteItem}>＋ Agregar producto</button>
                   </div>
                   <div className="quote-sheet-row"><span>Cajas/Bultos por pallet</span><input inputMode="decimal" value={item.boxesPerPallet} onBlur={() => formatImportQuoteNumber(index, "boxesPerPallet")} onChange={(event) => updateImportQuoteNumber(index, "boxesPerPallet", event.target.value)} /></div>
                   <div className="quote-sheet-row"><span>Pallets</span><input inputMode="decimal" value={item.pallets} onBlur={() => formatImportQuoteNumber(index, "pallets")} onChange={(event) => updateImportQuoteNumber(index, "pallets", event.target.value)} /></div>
-                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input inputMode="decimal" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? quoteNumber.format(result.calculatedBoxes) : item.boxes} onBlur={() => formatImportQuoteNumber(index, "boxes")} onChange={(event) => updateImportQuoteNumber(index, "boxes", event.target.value)} /></div>
+                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input inputMode="decimal" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? quoteInteger.format(result.calculatedBoxes) : item.boxes} onBlur={() => formatImportQuoteNumber(index, "boxes")} onChange={(event) => updateImportQuoteNumber(index, "boxes", event.target.value)} /></div>
                   <div className="quote-sheet-subtitle">Costo x caja o bulto</div>
-                  <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.purchasePriceMxn} onBlur={() => formatImportQuoteNumber(index, "purchasePriceMxn")} onChange={(event) => updateImportQuoteNumber(index, "purchasePriceMxn", event.target.value)} /></span></div>
-                  <div className="quote-sheet-row"><span>Precio de venta USD</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.marketPriceUsd} onBlur={() => formatImportQuoteNumber(index, "marketPriceUsd")} onChange={(event) => updateImportQuoteNumber(index, "marketPriceUsd", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><div className="quote-fixed-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.purchasePriceMxn} onBlur={() => formatImportQuoteNumber(index, "purchasePriceMxn")} onChange={(event) => updateImportQuoteNumber(index, "purchasePriceMxn", event.target.value)} /></span><b>MXN</b></div></div>
+                  <div className="quote-sheet-row"><span>Precio de venta USD</span><div className="quote-fixed-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.marketPriceUsd} onBlur={() => formatImportQuoteNumber(index, "marketPriceUsd")} onChange={(event) => updateImportQuoteNumber(index, "marketPriceUsd", event.target.value)} /></span><b>USD</b></div></div>
                 </section>
                 <section className="quote-sheet-right">
                   <div className="quote-sheet-title">Gastos</div>
-                  <div className="quote-sheet-row"><span>Tipo de cambio</span><input inputMode="decimal" value={item.exchangeRate} onBlur={() => formatImportQuoteNumber(index, "exchangeRate")} onChange={(event) => updateImportQuoteNumber(index, "exchangeRate", event.target.value)} placeholder="MXN por USD" /></div>
-                  <div className="quote-sheet-row"><span>Flete + Transfer</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.freightMxn} onBlur={() => formatImportQuoteNumber(index, "freightMxn")} onChange={(event) => updateImportQuoteNumber(index, "freightMxn", event.target.value)} /></span></div>
-                  <div className="quote-sheet-row"><span>IVA</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 0.16)} /></div>
+                  <div className="quote-sheet-row"><span>Tipo de cambio</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.exchangeRate} onBlur={() => formatImportQuoteNumber(index, "exchangeRate")} onChange={(event) => updateImportQuoteNumber(index, "exchangeRate", event.target.value)} placeholder="MXN por USD" /></span></div>
+                  <div className="quote-sheet-row quote-freight-row"><span>Flete + Transfer</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.freightMxn} onBlur={() => formatImportQuoteNumber(index, "freightMxn")} onChange={(event) => updateImportQuoteNumber(index, "freightMxn", event.target.value)} /></span><span>IVA</span><span className="dollar-input"><span>$</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 0.16)} /></span></div>
+                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total Flete</span><span className="dollar-input"><span>$</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 1.16)} /></span></div>
                   <div className="quote-sheet-row"><span>Gastos aduana MX</span><div className="quote-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.mexicoCostsMxn} onBlur={() => formatImportQuoteNumber(index, "mexicoCostsMxn")} onChange={(event) => updateImportQuoteNumber(index, "mexicoCostsMxn", event.target.value)} /></span><select value={item.mexicoCostsCurrency} onChange={(event) => updateImportQuoteItem(index, { mexicoCostsCurrency: event.target.value as Currency })}><option value="MXN">MXN</option><option value="USD">USD</option></select></div></div>
                   <div className="quote-sheet-row"><span>Gastos aduana USA</span><div className="quote-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.usCostsUsd} onBlur={() => formatImportQuoteNumber(index, "usCostsUsd")} onChange={(event) => updateImportQuoteNumber(index, "usCostsUsd", event.target.value)} /></span><select value={item.usCostsCurrency} onChange={(event) => updateImportQuoteItem(index, { usCostsCurrency: event.target.value as Currency })}><option value="MXN">MXN</option><option value="USD">USD</option></select></div></div>
                   <div className="quote-sheet-row"><span>Inspección USDA</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.inspectionUsd} onBlur={() => formatImportQuoteNumber(index, "inspectionUsd")} onChange={(event) => updateImportQuoteNumber(index, "inspectionUsd", event.target.value)} /></span></div>
@@ -1913,9 +1924,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
                 </section>
               </div>
               <div className="import-quote-result quote-sheet-results">
-                <span><small>Costo puesto USA</small><strong>{money.format(result?.landedCost || 0)}</strong></span>
-                <span className={(result?.profitBox || 0) >= 0 ? "positive" : "negative"}><small>Utilidad/caja</small><strong>{money.format(result?.profitBox || 0)}</strong></span>
-                <span className={(result?.totalProfit || 0) >= 0 ? "positive" : "negative"}><small>Utilidad total</small><strong>{money.format(result?.totalProfit || 0)}</strong></span>
+                <span><small>Costo puesto USA</small><strong>{money.format(result?.landedCost || 0)}</strong><b>{moneyMxn.format(result?.landedCostMxn || 0)}</b></span>
+                <span className={(result?.profitBox || 0) >= 0 ? "positive" : "negative"}><small>Utilidad/caja</small><strong>{money.format(result?.profitBox || 0)}</strong><b>{moneyMxn.format(result?.profitBoxMxn || 0)}</b></span>
+                <span className={(result?.totalProfit || 0) >= 0 ? "positive" : "negative"}><small>Utilidad total</small><strong>{money.format(result?.totalProfit || 0)}</strong><b>{moneyMxn.format(result?.totalProfitMxn || 0)}</b></span>
               </div>
             </article>;
           })}</div>
