@@ -1847,29 +1847,37 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <div className="import-quote-list">{importQuoteItems.map((item, index) => {
             const result = importQuoteSummary.rows[index];
             const productOptionsId = `import-quote-products-${index}`;
-            return <article className="import-quote-card" key={index}>
-              <div className="import-quote-row-main">
-                <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={item.product} onChange={(event) => updateImportQuoteItem(index, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
-                <label><span>Peso</span><input value={item.weight} onChange={(event) => updateImportQuoteItem(index, { weight: event.target.value })} placeholder="Ej. 50 lbs" /></label>
-                <label><span>Cajas/Bultos por pallet</span><input min="0" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateImportQuoteItem(index, { boxesPerPallet: event.target.value })} /></label>
-                <label><span>Pallets</span><input min="0" step="1" type="number" value={item.pallets} onChange={(event) => updateImportQuoteItem(index, { pallets: event.target.value })} /></label>
-                <label><span>Total cajas</span><input min="0" step="1" type="number" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? String(result.calculatedBoxes) : item.boxes} onChange={(event) => updateImportQuoteItem(index, { boxes: event.target.value })} /></label>
-                <button type="button" className="sale-line-remove" disabled={importQuoteItems.length === 1} aria-label="Eliminar producto de cotización" onClick={() => removeImportQuoteItem(index)}>×</button>
+            return <article className="import-quote-card import-quote-sheet" key={index}>
+              <div className="quote-sheet-toolbar"><strong>Producto {index + 1}</strong><button type="button" className="sale-line-remove" disabled={importQuoteItems.length === 1} aria-label="Eliminar producto de cotización" onClick={() => removeImportQuoteItem(index)}>×</button></div>
+              <div className="quote-sheet-body">
+                <section className="quote-sheet-left">
+                  <div className="quote-sheet-title">Datos del producto</div>
+                  <div className="quote-product-line">
+                    <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={item.product} onChange={(event) => updateImportQuoteItem(index, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
+                    <label><span>Peso</span><input value={item.weight} onChange={(event) => updateImportQuoteItem(index, { weight: event.target.value })} placeholder="Ej. 50 lbs" /></label>
+                  </div>
+                  <div className="quote-sheet-row"><span>Cajas/Bultos por pallet</span><input min="0" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateImportQuoteItem(index, { boxesPerPallet: event.target.value })} /></div>
+                  <div className="quote-sheet-row"><span>Pallets</span><input min="0" step="1" type="number" value={item.pallets} onChange={(event) => updateImportQuoteItem(index, { pallets: event.target.value })} /></div>
+                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input min="0" step="1" type="number" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? String(result.calculatedBoxes) : item.boxes} onChange={(event) => updateImportQuoteItem(index, { boxes: event.target.value })} /></div>
+                  <div className="quote-sheet-subtitle">Costo x caja o bulto</div>
+                  <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.purchasePriceMxn} onChange={(event) => updateImportQuoteItem(index, { purchasePriceMxn: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Precio de venta USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.marketPriceUsd} onChange={(event) => updateImportQuoteItem(index, { marketPriceUsd: event.target.value })} /></span></div>
+                </section>
+                <section className="quote-sheet-right">
+                  <div className="quote-sheet-title">Gastos</div>
+                  <div className="quote-sheet-row"><span>Tipo de cambio</span><input min="0" step="0.0001" type="number" value={item.exchangeRate} onChange={(event) => updateImportQuoteItem(index, { exchangeRate: event.target.value })} placeholder="MXN por USD" /></div>
+                  <div className="quote-sheet-row"><span>Flete + transfer MXN</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.freightMxn} onChange={(event) => updateImportQuoteItem(index, { freightMxn: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>IVA</span><input readOnly value={moneyMxn.format((Number(item.freightMxn) || 0) * 0.16)} /></div>
+                  <div className="quote-sheet-row"><span>Gastos aduana MX</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.mexicoCostsMxn} onChange={(event) => updateImportQuoteItem(index, { mexicoCostsMxn: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Gastos aduana USA</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.usCostsUsd} onChange={(event) => updateImportQuoteItem(index, { usCostsUsd: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Inspección USDA</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.inspectionUsd} onChange={(event) => updateImportQuoteItem(index, { inspectionUsd: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Cold storage x pallet</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.coldStorageUsd} onChange={(event) => updateImportQuoteItem(index, { coldStorageUsd: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Sobrepeso</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.overweightMxn} onChange={(event) => updateImportQuoteItem(index, { overweightMxn: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Otros USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.otherCostsUsd} onChange={(event) => updateImportQuoteItem(index, { otherCostsUsd: event.target.value })} /></span></div>
+                </section>
               </div>
-              <div className="import-quote-grid">
-                <label><span>Tipo de cambio</span><input min="0" step="0.0001" type="number" value={item.exchangeRate} onChange={(event) => updateImportQuoteItem(index, { exchangeRate: event.target.value })} placeholder="MXN por USD" /></label>
-                <label><span>Compra MXN/caja o bulto</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.purchasePriceMxn} onChange={(event) => updateImportQuoteItem(index, { purchasePriceMxn: event.target.value })} /></span></label>
-                <label><span>Flete + transfer MXN</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.freightMxn} onChange={(event) => updateImportQuoteItem(index, { freightMxn: event.target.value })} /></span></label>
-                <label><span>IVA flete MXN</span><input readOnly value={moneyMxn.format((Number(item.freightMxn) || 0) * 0.16)} /></label>
-                <label><span>Aduana MX total</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.mexicoCostsMxn} onChange={(event) => updateImportQuoteItem(index, { mexicoCostsMxn: event.target.value })} /></span></label>
-                <label><span>Aduana USA USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.usCostsUsd} onChange={(event) => updateImportQuoteItem(index, { usCostsUsd: event.target.value })} /></span></label>
-                <label><span>Inspección USDA USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.inspectionUsd} onChange={(event) => updateImportQuoteItem(index, { inspectionUsd: event.target.value })} /></span></label>
-                <label><span>Cold storage USD/pallet</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.coldStorageUsd} onChange={(event) => updateImportQuoteItem(index, { coldStorageUsd: event.target.value })} /></span></label>
-                <label><span>Sobrepeso MXN</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.overweightMxn} onChange={(event) => updateImportQuoteItem(index, { overweightMxn: event.target.value })} /></span></label>
-                <label><span>Otros USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.otherCostsUsd} onChange={(event) => updateImportQuoteItem(index, { otherCostsUsd: event.target.value })} /></span></label>
-                <label><span>Precio mercado USD/caja</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.marketPriceUsd} onChange={(event) => updateImportQuoteItem(index, { marketPriceUsd: event.target.value })} /></span></label>
-              </div>
-              <div className="import-quote-result">
+              <div className="quote-sheet-notes"><span>* En caso de intensivo en aduana americana, puede haber cargo extra.</span><span>* Los gastos se consideran estimados y deben estar soportados por factura o recibo.</span></div>
+              <div className="import-quote-result quote-sheet-results">
                 <span><small>Compra USD/caja</small><strong>{money.format(result?.purchaseUsd || 0)}</strong></span>
                 <span><small>Importación USD/caja</small><strong>{money.format(result?.importCostBox || 0)}</strong></span>
                 <span><small>Costo puesto USA</small><strong>{money.format(result?.landedCost || 0)}</strong></span>
