@@ -208,3 +208,20 @@ export const userAccounts = pgTable(
     index("users_org_email_idx").on(table.organizationCode, table.email),
   ],
 );
+
+export const sellerLiquidations = pgTable(
+  "seller_liquidations",
+  {
+    id: serial("id").primaryKey(),
+    organizationCode: text("organization_code").notNull().default("USA"),
+    sellerName: text("seller_name").notNull(),
+    liquidationDate: text("liquidation_date").notNull(),
+    amount: doublePrecision("amount").notNull(),
+    notes: text("notes"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
+  },
+  (table) => [
+    index("seller_liquidations_org_seller_idx").on(table.organizationCode, table.sellerName),
+    index("seller_liquidations_org_date_idx").on(table.organizationCode, table.liquidationDate),
+  ],
+);

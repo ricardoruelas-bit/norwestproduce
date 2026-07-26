@@ -212,6 +212,18 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
     )
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS seller_liquidations (
+      id SERIAL PRIMARY KEY,
+      organization_code TEXT NOT NULL DEFAULT 'USA',
+      seller_name TEXT NOT NULL,
+      liquidation_date TEXT NOT NULL,
+      amount DOUBLE PRECISION NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+    )
+  `;
+
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS load_date TEXT`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS attachments TEXT NOT NULL DEFAULT '[]'`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS cost_attachments TEXT NOT NULL DEFAULT '{}'`;
@@ -242,6 +254,8 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
   await sql`CREATE INDEX IF NOT EXISTS partners_org_tax_id_idx ON business_partners (organization_code, tax_id)`;
   await sql`CREATE INDEX IF NOT EXISTS users_org_alias_idx ON user_accounts (organization_code, alias)`;
   await sql`CREATE INDEX IF NOT EXISTS users_org_email_idx ON user_accounts (organization_code, email)`;
+  await sql`CREATE INDEX IF NOT EXISTS seller_liquidations_org_seller_idx ON seller_liquidations (organization_code, seller_name)`;
+  await sql`CREATE INDEX IF NOT EXISTS seller_liquidations_org_date_idx ON seller_liquidations (organization_code, liquidation_date)`;
 }
 
 export async function getDb() {

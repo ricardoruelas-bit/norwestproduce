@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, Fragment, KeyboardEvent, useEffect, useMemo, useState } from "react";
-import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceAdjustment, InvoiceItem, PartnerType, Product, Sale, UserAccount } from "../../lib/types";
+import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceAdjustment, InvoiceItem, PartnerType, Product, Sale, SellerLiquidation, UserAccount } from "../../lib/types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
@@ -16,9 +16,9 @@ const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "
 const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be made within 24 hours of arrival at destination and must be supported with a timely federal inspection fo the complete lot in question. We reserve the right to deny credit. Negotiated under P.A.C.A. terms. INTEREST WILL ACCRUE ON ANY PAST BALANCE AT THE RATE OF 1.5% PER MONTH (18% PER ANNUM.) The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
-type Section = "dashboard" | "catalogs" | "inventory" | "importQuote" | "invoicing" | "collections" | "reports" | "settings";
+type Section = "dashboard" | "catalogs" | "inventory" | "importQuote" | "invoicing" | "collections" | "reports" | "administration" | "settings";
 type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
-type ReportTab = "sales" | "inventory" | "collections" | "profit" | "adjustments";
+type ReportTab = "sales" | "inventory" | "collections" | "profit" | "importProfit" | "sellerProfit" | "adjustments";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
@@ -240,7 +240,7 @@ const blankColdStorage = { name: "", address: "", phone: "", stateCode: "", stat
 const blankCompany = { legalName: "NORWEST PRODUCE LLC", street: "710 LAUREL AVENUE", city: "MCALLEN", state: "TX", postalCode: "78501", blueBookNumber: "", pacaNumber: "", dunsNumber: "", taxId: "", norwestProfitPercentage: "16" };
 const blankUser = { fullName: "", alias: "", email: "", password: "", currentPassword: "", newPassword: "", confirmNewPassword: "", active: true, permissions: ["sales_view"] as string[] };
 const PERMISSION_OPTIONS = [
-  ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
+  ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["administration", "Administración"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
 ] as const;
 type Currency = "USD" | "MXN";
 type CostKey = "purchasePrice" | "freightCost" | "mexicoCustomsCost" | "usCustomsCost" | "overweightCost" | "redLightCost" | "redLightUsCost" | "coldStorageCost";
@@ -274,6 +274,10 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [reportQuery, setReportQuery] = useState("");
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
+  const [sellerLiquidations, setSellerLiquidations] = useState<SellerLiquidation[]>([]);
+  const [sellerLiquidationForm, setSellerLiquidationForm] = useState({ sellerName: "", liquidationDate: localDateKey(), amount: "", notes: "" });
+  const [sellerLiquidationState, setSellerLiquidationState] = useState("");
+  const [sellerDetailName, setSellerDetailName] = useState<string | null>(null);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [partnerTypeFilter, setPartnerTypeFilter] = useState<CatalogType>("SUPPLIER");
   const [partnerModal, setPartnerModal] = useState<PartnerType | null>(null);
@@ -436,6 +440,16 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     if (usersResponse.ok && Array.isArray(usersData.users)) setUsers(usersData.users);
   }
 
+  async function loadSellerLiquidations() {
+    try {
+      const response = await fetch("/api/usa/seller-liquidations");
+      const data = await response.json();
+      if (Array.isArray(data.liquidations)) setSellerLiquidations(data.liquidations);
+    } catch {
+      setSellerLiquidations([]);
+    }
+  }
+
   function openSettings() {
     setSection("settings");
     setCompanySaveState("");
@@ -444,7 +458,28 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
   function openReports() {
     setSection("reports");
-    void Promise.all([loadPartners(), loadProducts(), loadColdStorages(), loadInventory(true)]);
+    void Promise.all([loadPartners(), loadProducts(), loadColdStorages(), loadInventory(true), loadSettings(), loadSellerLiquidations()]);
+  }
+
+  function openAdministration() {
+    setSection("administration");
+    setSellerLiquidationState("");
+    void Promise.all([loadPartners(), loadSettings(), loadSellerLiquidations()]);
+  }
+
+  async function saveSellerLiquidation(event: FormEvent) {
+    event.preventDefault();
+    setSellerLiquidationState("Guardando...");
+    try {
+      const response = await fetch("/api/usa/seller-liquidations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sellerLiquidationForm) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo registrar la liquidacion.");
+      if (data.liquidation) setSellerLiquidations((current) => [data.liquidation, ...current]);
+      setSellerLiquidationForm((current) => ({ sellerName: current.sellerName, liquidationDate: localDateKey(), amount: "", notes: "" }));
+      setSellerLiquidationState("Liquidacion registrada correctamente.");
+    } catch (error) {
+      setSellerLiquidationState(error instanceof Error ? error.message : "No se pudo registrar la liquidacion.");
+    }
   }
 
   async function saveCompanySettings(event: FormEvent) {
@@ -1708,6 +1743,14 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const items = invoiceItemsFor(sale);
     return sale.profit ?? items.reduce((sum, item) => sum + (Number(item.unitPrice || 0) - Number(item.purchasePrice ?? sale.purchasePrice ?? 0)) * Number(item.quantity || 0), 0);
   };
+  const saleCostFor = (sale: Sale) => saleTotalFor(sale) - saleProfitFor(sale);
+  const customerForSale = (sale: Sale) => partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === sale.customer);
+  const sellerProfitFor = (sale: Sale) => {
+    const customer = customerForSale(sale);
+    const profit = saleProfitFor(sale);
+    const norwestShare = profit * (Number(companyForm.norwestProfitPercentage || 0) / 100);
+    return Math.max(0, profit - norwestShare) * (Number(customer?.profitPercentage || 0) / 100);
+  };
   const reportSaleRows = useMemo(() => salesRows.filter((sale) => {
     if (sale.canceledAt || !matchesReportDate(sale.saleDate)) return false;
     if (!reportSearch) return true;
@@ -1747,26 +1790,63 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     return text.includes(reportSearch);
   }).sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31")), [reportSearch, reportFromDate, reportToDate, salesRows]);
 
-  const reportProfitRows = useMemo(() => {
-    const groups = new Map<string, { product: string; operations: Set<string>; boxes: number; sales: number; profit: number }>();
-    reportSaleRows.forEach((sale) => {
+  const reportProfitRows = useMemo(() => reportSaleRows.map((sale) => ({
+    sale,
+    boxes: saleBoxesFor(sale),
+    sales: saleTotalFor(sale),
+    cost: saleCostFor(sale),
+    profit: saleProfitFor(sale),
+    sellerProfit: sellerProfitFor(sale),
+  })).sort((a, b) => b.sale.saleDate.localeCompare(a.sale.saleDate)), [reportSaleRows, partners, companyForm.norwestProfitPercentage]);
+
+  const reportImportedLoadProfitRows = useMemo(() => {
+    const lotsById = new Map(inventory.map((lot) => [lot.id, lot]));
+    const groups = new Map<string, { key: string; loadReference: string; supplier: string; warehouse: string; productAliases: Set<string>; sales: Sale[]; boxes: number; saleTotal: number; cost: number; profit: number }>();
+    reportSaleRows.filter((sale) => sale.operationType === "IMPORTED_INVENTORY").forEach((sale) => {
       const items = invoiceItemsFor(sale);
-      const lines = items.length ? items : [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice ?? 0, purchasePrice: sale.purchasePrice ?? 0 }];
-      lines.forEach((item) => {
-        const key = productAlias(item.product);
-        const current = groups.get(key) || { product: key, operations: new Set<string>(), boxes: 0, sales: 0, profit: 0 };
-        const quantity = Number(item.quantity || 0);
-        const saleAmount = quantity * Number(item.unitPrice || 0);
-        const profitAmount = quantity * (Number(item.unitPrice || 0) - Number(item.purchasePrice ?? sale.purchasePrice ?? 0));
-        current.operations.add(String(sale.id ?? sale.sourceRow ?? sale.pickupNumber));
-        current.boxes += quantity;
-        current.sales += saleAmount;
-        current.profit += profitAmount;
-        groups.set(key, current);
-      });
+      const lot = items.map((item) => item.inventoryLotId ? lotsById.get(Number(item.inventoryLotId)) : undefined).find(Boolean) || (sale.inventoryLotId ? lotsById.get(sale.inventoryLotId) : undefined);
+      const key = lot ? inventoryLoadKey(lot) : `sale:${sale.id ?? sale.pickupNumber}`;
+      const current = groups.get(key) || { key, loadReference: lot?.pickupNumber || sale.pickupNumber || "S/R", supplier: lot?.supplier || sale.supplier || "N/A", warehouse: lot?.coldStorage || lot?.warehouse || sale.warehouse, productAliases: new Set<string>(), sales: [], boxes: 0, saleTotal: 0, cost: 0, profit: 0 };
+      current.sales.push(sale);
+      current.boxes += saleBoxesFor(sale);
+      current.saleTotal += saleTotalFor(sale);
+      current.cost += saleCostFor(sale);
+      current.profit += saleProfitFor(sale);
+      (items.length ? items : [{ product: sale.product } as InvoiceItem]).forEach((item) => current.productAliases.add(productAlias(item.product)));
+      groups.set(key, current);
     });
-    return Array.from(groups.values()).map((row) => ({ ...row, operationCount: row.operations.size, profitPerBox: row.boxes ? row.profit / row.boxes : 0 })).sort((a, b) => b.profit - a.profit);
-  }, [reportSaleRows, products]);
+    return Array.from(groups.values()).map((row) => ({ ...row, saleCount: row.sales.length, productLabel: Array.from(row.productAliases).join(" / "), profitPerBox: row.boxes ? row.profit / row.boxes : 0 })).sort((a, b) => b.profit - a.profit);
+  }, [reportSaleRows, inventory, products]);
+
+  const reportSellerProfitRows = useMemo(() => {
+    const groups = new Map<string, { sellerName: string; sales: Sale[]; boxes: number; saleTotal: number; profit: number; sellerProfit: number; paid: number }>();
+    const ensure = (sellerName: string) => {
+      const key = sellerName || "Sin vendedor";
+      const existing = groups.get(key);
+      if (existing) return existing;
+      const created = { sellerName: key, sales: [] as Sale[], boxes: 0, saleTotal: 0, profit: 0, sellerProfit: 0, paid: 0 };
+      groups.set(key, created);
+      return created;
+    };
+    users.filter((user) => user.active).forEach((user) => ensure(user.fullName));
+    reportSaleRows.forEach((sale) => {
+      const row = ensure(sale.sellerName || "Sin vendedor");
+      row.sales.push(sale);
+      row.boxes += saleBoxesFor(sale);
+      row.saleTotal += saleTotalFor(sale);
+      row.profit += saleProfitFor(sale);
+      row.sellerProfit += sellerProfitFor(sale);
+    });
+    sellerLiquidations.forEach((liquidation) => {
+      ensure(liquidation.sellerName).paid += Number(liquidation.amount || 0);
+    });
+    return Array.from(groups.values())
+      .map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length }))
+      .filter((row) => row.saleCount || row.paid || row.sellerName !== "Sin vendedor")
+      .sort((a, b) => b.sellerProfit - a.sellerProfit);
+  }, [reportSaleRows, partners, companyForm.norwestProfitPercentage, sellerLiquidations, users]);
+
+  const sellerDetailSales = useMemo(() => sellerDetailName ? reportSaleRows.filter((sale) => (sale.sellerName || "Sin vendedor") === sellerDetailName) : [], [sellerDetailName, reportSaleRows]);
 
   const reportAdjustmentRows = useMemo(() => salesRows.flatMap((sale) => adjustmentsFor(sale).map((adjustment) => ({ sale, adjustment }))).filter(({ sale, adjustment }) => {
     const adjustmentDate = adjustment.createdAt.slice(0, 10);
@@ -1785,6 +1865,39 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       receivable: pendingCollections.reduce((sum, sale) => sum + (sale.total ?? 0), 0),
     };
   }, [reportSaleRows, reportCollectionRows]);
+
+  const administrationSellerRows = useMemo(() => {
+    const rows = new Map<string, { sellerName: string; sales: Sale[]; boxes: number; saleTotal: number; profit: number; sellerProfit: number; paid: number }>();
+    const ensure = (sellerName: string) => {
+      const key = sellerName || "Sin vendedor";
+      const existing = rows.get(key);
+      if (existing) return existing;
+      const created = { sellerName: key, sales: [] as Sale[], boxes: 0, saleTotal: 0, profit: 0, sellerProfit: 0, paid: 0 };
+      rows.set(key, created);
+      return created;
+    };
+    users.filter((user) => user.active).forEach((user) => ensure(user.fullName));
+    salesRows.filter((sale) => !sale.canceledAt).forEach((sale) => {
+      const row = ensure(sale.sellerName || "Sin vendedor");
+      row.sales.push(sale);
+      row.boxes += saleBoxesFor(sale);
+      row.saleTotal += saleTotalFor(sale);
+      row.profit += saleProfitFor(sale);
+      row.sellerProfit += sellerProfitFor(sale);
+    });
+    sellerLiquidations.forEach((liquidation) => {
+      ensure(liquidation.sellerName).paid += Number(liquidation.amount || 0);
+    });
+    return Array.from(rows.values()).map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length })).sort((a, b) => b.balance - a.balance);
+  }, [salesRows, users, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
+
+  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), ...salesRows.map((sale) => sale.sellerName || "").filter(Boolean), ...sellerLiquidations.map((item) => item.sellerName)])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations]);
+  const administrationTotals = useMemo(() => ({
+    generated: administrationSellerRows.reduce((sum, row) => sum + row.sellerProfit, 0),
+    paid: sellerLiquidations.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+    balance: administrationSellerRows.reduce((sum, row) => sum + row.balance, 0),
+    sellers: administrationSellerRows.filter((row) => row.saleCount || row.paid).length,
+  }), [administrationSellerRows, sellerLiquidations]);
 
   const statementRows = useMemo(() => {
     if (!statementCustomer) return [];
@@ -1952,7 +2065,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button>
           <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
           <button className={`nav-item ${section === "importQuote" ? "active" : ""}`} onClick={() => setSection("importQuote")}><span>$</span> Cotización para Importar</button>
-          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => { setSection("collections"); void loadPartners(); }}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><button className={`nav-item ${section === "reports" ? "active" : ""}`} onClick={openReports}><span>⌁</span> Reportes</button><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
+          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => { setSection("collections"); void loadPartners(); }}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><button className={`nav-item ${section === "reports" ? "active" : ""}`} onClick={openReports}><span>⌁</span> Reportes</button><button className={`nav-item ${section === "administration" ? "active" : ""}`} onClick={openAdministration}><span>▣</span> Administración</button><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div>
@@ -2129,6 +2242,37 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         </section>
       </section>}
 
+      {section === "administration" && <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Administración</h1></div></header>
+        <section className="summary-grid administration-summary">
+          <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Utilidad vendedores</p><strong>{money.format(administrationTotals.generated)}</strong><span>{number.format(administrationTotals.sellers)} vendedores con movimiento</span></article>
+          <article className="metric-card accent-blue"><div className="metric-icon">✓</div><p>Liquidado</p><strong>{money.format(administrationTotals.paid)}</strong><span>Pagos registrados a vendedores</span></article>
+          <article className="metric-card accent-gold"><div className="metric-icon">!</div><p>Saldo por liquidar</p><strong>{money.format(administrationTotals.balance)}</strong><span>Utilidad pendiente de pago</span></article>
+          <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Ventas consideradas</p><strong>{number.format(salesRows.filter((sale) => !sale.canceledAt).length)}</strong><span>No incluye ventas canceladas</span></article>
+        </section>
+        <section className="administration-layout">
+          <form className="sales-panel administration-card" onSubmit={saveSellerLiquidation}>
+            <div className="panel-heading"><div><h2>Registrar liquidación</h2><p>Captura pagos hechos al vendedor para descontarlos de su saldo.</p></div></div>
+            <div className="admin-form-grid">
+              <label>Vendedor<select required value={sellerLiquidationForm.sellerName} onChange={(event) => setSellerLiquidationForm({ ...sellerLiquidationForm, sellerName: event.target.value })}><option value="">Selecciona vendedor</option>{sellerOptions.map((seller) => <option key={seller} value={seller}>{seller}</option>)}</select></label>
+              <label>Fecha<input required type="date" value={sellerLiquidationForm.liquidationDate} onChange={(event) => setSellerLiquidationForm({ ...sellerLiquidationForm, liquidationDate: event.target.value })} /></label>
+              <label>Monto liquidado<span className="dollar-input"><span>$</span><input required min="0.01" step="0.01" type="number" value={sellerLiquidationForm.amount} onChange={(event) => setSellerLiquidationForm({ ...sellerLiquidationForm, amount: event.target.value })} /></span></label>
+              <label className="span-2">Nota<input value={sellerLiquidationForm.notes} onChange={(event) => setSellerLiquidationForm({ ...sellerLiquidationForm, notes: event.target.value })} placeholder="Referencia de pago, transferencia o comentario" /></label>
+            </div>
+            {sellerLiquidationState && <p className="form-message">{sellerLiquidationState}</p>}<div className="settings-actions"><button type="submit" className="primary-button">Guardar liquidación</button></div>
+          </form>
+          <section className="sales-panel administration-card">
+            <div className="panel-heading"><div><h2>Saldo por vendedor</h2><p>Utilidad generada menos liquidaciones registradas.</p></div><span className="record-count">{administrationSellerRows.length} vendedores</span></div>
+            <div className="table-wrap administration-table"><table><thead><tr><th>Vendedor</th><th className="numeric">Ventas</th><th className="numeric">Venta total</th><th className="numeric">Utilidad total</th><th className="numeric">Utilidad vendedor</th><th className="numeric">Liquidado</th><th className="numeric">Saldo</th></tr></thead><tbody>{administrationSellerRows.map((row) => <tr key={row.sellerName}><td><strong>{row.sellerName}</strong><small>{number.format(row.boxes)} cajas</small></td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{money.format(row.saleTotal)}</td><td className={`numeric ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className="numeric strong-number">{money.format(row.sellerProfit)}</td><td className="numeric">{money.format(row.paid)}</td><td className={`numeric strong-number ${row.balance < 0 ? "negative-number" : ""}`}>{money.format(row.balance)}</td></tr>)}</tbody></table></div>
+          </section>
+        </section>
+        <section className="sales-panel administration-history">
+          <div className="panel-heading"><div><h2>Historial de liquidaciones</h2><p>Pagos registrados a vendedores.</p></div><span className="record-count">{sellerLiquidations.length} movimientos</span></div>
+          <div className="table-wrap administration-table"><table><thead><tr><th>Fecha</th><th>Vendedor</th><th className="numeric">Monto</th><th>Nota</th><th>Registro</th></tr></thead><tbody>{sellerLiquidations.map((item) => <tr key={item.id}><td>{formatDate(item.liquidationDate)}</td><td><strong>{item.sellerName}</strong></td><td className="numeric strong-number">{money.format(item.amount)}</td><td>{item.notes || "Sin nota"}</td><td>{item.createdAt ? new Date(item.createdAt).toLocaleString("es-MX") : "N/A"}</td></tr>)}</tbody></table></div>
+          {!sellerLiquidations.length && <div className="catalog-empty"><strong>Aun no hay liquidaciones registradas</strong><span>Cuando pagues utilidad a un vendedor, registrala desde el formulario superior.</span></div>}
+        </section>
+      </section>}
+
       {section === "reports" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Reportes</h1></div></header>
         <section className="summary-grid report-summary">
@@ -2138,7 +2282,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Cartera</p><strong>{money.format(reportSummary.receivable)}</strong><span>Saldo pendiente en facturas filtradas</span></article>
         </section>
         <section className="sales-panel reports-panel">
-          <div className="panel-heading"><div><h2>Centro de reportes USA</h2><p>Consulta ventas, inventario, cartera, utilidad y ajustes sin modificar la operacion.</p></div><span className="record-count">{reportTab === "sales" ? reportSaleRows.length : reportTab === "inventory" ? reportInventoryRows.length : reportTab === "collections" ? reportCollectionRows.length : reportTab === "profit" ? reportProfitRows.length : reportAdjustmentRows.length} registros</span></div>
+          <div className="panel-heading"><div><h2>Centro de reportes USA</h2><p>Consulta ventas, inventario, cartera, utilidad y ajustes sin modificar la operacion.</p></div><span className="record-count">{reportTab === "sales" ? reportSaleRows.length : reportTab === "inventory" ? reportInventoryRows.length : reportTab === "collections" ? reportCollectionRows.length : reportTab === "profit" ? reportProfitRows.length : reportTab === "importProfit" ? reportImportedLoadProfitRows.length : reportTab === "sellerProfit" ? reportSellerProfitRows.length : reportAdjustmentRows.length} registros</span></div>
           <div className="filters report-filters">
             <label className="search-box"><span>⌕</span><input value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar cliente, factura, pickup, PO, producto o proveedor" /></label>
             <label className="report-date-field"><span>Desde</span><input type="date" value={reportFromDate} onChange={(event) => setReportFromDate(event.target.value)} /></label>
@@ -2150,7 +2294,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
               ["sales", "Ventas"],
               ["inventory", "Inventario"],
               ["collections", "Cartera"],
-              ["profit", "Utilidad"],
+              ["profit", "Utilidad por Carga"],
+              ["importProfit", "Utilidad por Carga importada"],
+              ["sellerProfit", "Utilidad por Vendedor"],
               ["adjustments", "Ajustes"],
             ] as Array<[ReportTab, string]>).map(([value, label]) => <button type="button" key={value} className={reportTab === value ? "active" : ""} onClick={() => setReportTab(value)}>{label}</button>)}
           </div>
@@ -2161,11 +2307,15 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
           {reportTab === "collections" && <div className="table-wrap report-table"><table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Vencimiento</th><th>Antiguedad</th><th>PO / Pickup</th><th>Estatus</th><th className="numeric">Saldo</th><th></th></tr></thead><tbody>{reportCollectionRows.map((sale) => { const status = collectionStatus(sale); const days = overdueDays(sale.dueDate); return <tr key={sale.id}><td><strong>#{sale.invoiceNumber}</strong></td><td>{sale.customer}</td><td>{formatDate(sale.saleDate)}</td><td>{formatDate(sale.dueDate)}</td><td><span className={`aging-chip ${days > 90 ? "critical" : days ? "overdue" : "current"}`}>{agingLabel(sale)}</span></td><td><strong>{sale.purchaseOrder || "N/A"}</strong><small>Pickup #{sale.pickupNumber}</small></td><td><span className={`collection-status ${status.toLocaleLowerCase()}`}>{status === "PAGADAS" ? "Pagada" : status === "VENCIDAS" ? "Vencida" : "Vigente"}</span></td><td className="numeric strong-number">{money.format(status === "PAGADAS" ? 0 : sale.total ?? 0)}</td><td><button type="button" className="edit-button" onClick={() => openInvoicePreview(sale)}>Ver factura</button></td></tr>; })}</tbody></table></div>}
 
-          {reportTab === "profit" && <div className="table-wrap report-table"><table><thead><tr><th>Producto / alias</th><th className="numeric">Operaciones</th><th className="numeric">Cajas</th><th className="numeric">Ventas</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th></tr></thead><tbody>{reportProfitRows.map((row) => <tr key={row.product}><td><strong>{row.product}</strong></td><td className="numeric">{number.format(row.operationCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.sales)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profitPerBox < 0 ? "negative-number" : ""}`}>{money.format(row.profitPerBox)}</td></tr>)}</tbody></table></div>}
+          {reportTab === "profit" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th><th className="numeric">Utilidad vendedor</th></tr></thead><tbody>{reportProfitRows.map((row, index) => <tr key={row.sale.id ?? `${row.sale.pickupNumber}-${index}`}><td>{formatDate(row.sale.saleDate)}</td><td>{row.sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row.sale)}><span className="invoice-chip invoice-ok">OK</span><small>{row.sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td><td><strong>{row.sale.customer}</strong><small>{row.sale.sellerName || "Sin vendedor"}</small></td><td>{row.sale.pickupNumber || "N/A"}</td><td>{productCell(row.sale)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.sales)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.boxes ? row.profit / row.boxes : 0)}</td><td className="numeric">{money.format(row.sellerProfit)}</td></tr>)}</tbody></table></div>}
+
+          {reportTab === "importProfit" && <div className="table-wrap report-table"><table><thead><tr><th>Factura carga</th><th>Proveedor</th><th>Bodega</th><th>Productos</th><th className="numeric">Ventas</th><th className="numeric">Cajas vendidas</th><th className="numeric">Venta total</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th></tr></thead><tbody>{reportImportedLoadProfitRows.map((row) => <tr key={row.key}><td><strong>{row.loadReference}</strong><small>{row.sales.map((sale) => sale.invoiceNumber || sale.pickupNumber).filter(Boolean).join(" / ") || "Sin facturas"}</small></td><td>{row.supplier}</td><td>{row.warehouse}</td><td>{row.productLabel || "N/A"}</td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profitPerBox < 0 ? "negative-number" : ""}`}>{money.format(row.profitPerBox)}</td></tr>)}</tbody></table></div>}
+
+          {reportTab === "sellerProfit" && <><div className="table-wrap report-table"><table><thead><tr><th>Vendedor</th><th className="numeric">Ventas</th><th className="numeric">Cajas</th><th className="numeric">Venta total</th><th className="numeric">Utilidad total</th><th className="numeric">Utilidad vendedor</th><th className="numeric">Liquidado</th><th className="numeric">Saldo</th></tr></thead><tbody>{reportSellerProfitRows.map((row) => <tr key={row.sellerName}><td><strong>{row.sellerName}</strong></td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className="numeric"><button type="button" className="report-money-button" onClick={() => setSellerDetailName(sellerDetailName === row.sellerName ? null : row.sellerName)}>{money.format(row.sellerProfit)}</button></td><td className="numeric">{money.format(row.paid)}</td><td className={`numeric strong-number ${row.balance < 0 ? "negative-number" : ""}`}>{money.format(row.balance)}</td></tr>)}</tbody></table></div>{sellerDetailName && <section className="seller-detail-panel"><div className="panel-heading"><div><h2>Detalle de utilidad de {sellerDetailName}</h2><p>Ventas que integran el monto acumulado del vendedor.</p></div><button type="button" className="secondary-button" onClick={() => setSellerDetailName(null)}>Cerrar detalle</button></div><div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedor</th></tr></thead><tbody>{sellerDetailSales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td>{sale.customer}</td><td>{sale.pickupNumber}</td><td>{productCell(sale)}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric strong-number">{money.format(sellerProfitFor(sale))}</td></tr>)}</tbody></table></div></section>}</>}
 
           {reportTab === "adjustments" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Ajuste</th><th>Factura</th><th>Cliente</th><th>Motivo</th><th>Tipo</th><th className="numeric">Diferencia</th><th>Notas</th><th></th></tr></thead><tbody>{reportAdjustmentRows.map(({ sale, adjustment }) => <tr key={`${sale.id}-${adjustment.number}`}><td>{formatDate(adjustment.createdAt.slice(0, 10))}</td><td><strong>{adjustment.number}</strong></td><td>{sale.invoiceNumber || "N/A"}</td><td>{sale.customer}</td><td>{adjustment.reason}</td><td>{adjustment.documentType}</td><td className={`numeric strong-number ${adjustment.difference < 0 ? "negative-number" : ""}`}>{money.format(adjustment.difference)}</td><td>{adjustment.notes || "Sin notas"}</td><td><button type="button" className="edit-button" onClick={() => setAdjustmentPreview({ sale, adjustment })}>Ver ajuste</button></td></tr>)}</tbody></table></div>}
 
-          {((reportTab === "sales" && reportSaleRows.length === 0) || (reportTab === "inventory" && reportInventoryRows.length === 0) || (reportTab === "collections" && reportCollectionRows.length === 0) || (reportTab === "profit" && reportProfitRows.length === 0) || (reportTab === "adjustments" && reportAdjustmentRows.length === 0)) && <div className="catalog-empty"><strong>No hay informacion para mostrar</strong><span>Ajusta la busqueda o el rango de fechas para consultar otros registros.</span></div>}
+          {((reportTab === "sales" && reportSaleRows.length === 0) || (reportTab === "inventory" && reportInventoryRows.length === 0) || (reportTab === "collections" && reportCollectionRows.length === 0) || (reportTab === "profit" && reportProfitRows.length === 0) || (reportTab === "importProfit" && reportImportedLoadProfitRows.length === 0) || (reportTab === "sellerProfit" && reportSellerProfitRows.length === 0) || (reportTab === "adjustments" && reportAdjustmentRows.length === 0)) && <div className="catalog-empty"><strong>No hay informacion para mostrar</strong><span>Ajusta la busqueda o el rango de fechas para consultar otros registros.</span></div>}
         </section>
       </section>}
 

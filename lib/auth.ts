@@ -1,6 +1,6 @@
 import type { userAccounts } from "../db/schema";
 
-export const ALL_USER_PERMISSIONS = ["sales_view", "sales_edit", "inventory", "invoicing", "collections", "catalogs", "reports", "settings", "users"] as const;
+export const ALL_USER_PERMISSIONS = ["sales_view", "sales_edit", "inventory", "invoicing", "collections", "catalogs", "reports", "administration", "settings", "users"] as const;
 
 // Credentials can come from environment variables; the values below preserve the initial owner account.
 export const DEFAULT_ADMIN_USER = {

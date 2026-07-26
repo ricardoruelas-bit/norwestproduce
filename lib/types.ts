@@ -193,3 +193,13 @@ export type UserAccount = {
   active: boolean;
   createdAt?: string;
 };
+
+export type SellerLiquidation = {
+  id: number;
+  organizationCode: string;
+  sellerName: string;
+  liquidationDate: string;
+  amount: number;
+  notes: string | null;
+  createdAt?: string;
+};
