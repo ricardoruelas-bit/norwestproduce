@@ -521,7 +521,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     event.preventDefault();
     setSellerLiquidationState("Guardando...");
     try {
-      const response = await fetch("/api/usa/seller-liquidations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sellerLiquidationForm) });
+      const response = await fetch("/api/usa/seller-liquidations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...sellerLiquidationForm, sellerName: canonicalSellerName(sellerLiquidationForm.sellerName) }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo registrar la liquidacion.");
       if (data.liquidation) setSellerLiquidations((current) => [data.liquidation, ...current]);
@@ -667,7 +667,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
       });
       if (!editingPartnerId && partnerTarget === "saleSupplier") setForm((current) => ({ ...current, supplier: data.partner.name }));
-      if (!editingPartnerId && partnerTarget === "saleCustomer") setForm((current) => ({ ...current, customer: data.partner.name, sellerName: data.partner.assignedSeller || "" }));
+      if (!editingPartnerId && partnerTarget === "saleCustomer") setForm((current) => ({ ...current, customer: data.partner.name, sellerName: data.partner.assignedSeller ? canonicalSellerName(data.partner.assignedSeller) : "" }));
       if (!editingPartnerId && partnerTarget === "inventorySupplier") setInventoryForm((current) => ({ ...current, supplier: data.partner.name }));
       setPartnerTypeFilter(partnerForm.partnerType);
       setPartnerModal(null);
@@ -1804,11 +1804,22 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const norwestPercentage = Math.min(100, Math.max(0, Number(companyForm.norwestProfitPercentage || 16)));
     return Math.max(0, saleProfitFor(sale) * ((100 - norwestPercentage) / 100));
   };
-  const profitSellerName = (code: "RR" | "GM") => users.find((user) => user.alias.toLocaleUpperCase() === code || user.fullName.toLocaleUpperCase() === code)?.fullName || code;
+  const sellerNameFromAlias = (code: "RR" | "GM") => users.find((user) => user.alias.toLocaleUpperCase() === code || user.fullName.toLocaleUpperCase() === code)?.fullName || (code === "RR" ? "Ricardo Ruelas" : code);
+  const canonicalSellerName = (value: string | null | undefined) => {
+    const name = String(value || "").trim();
+    if (!name) return "Sin vendedor";
+    const upper = name.toLocaleUpperCase();
+    const aliasUser = users.find((user) => user.alias.toLocaleUpperCase() === upper);
+    if (aliasUser) return aliasUser.fullName;
+    if (upper === "RR") return sellerNameFromAlias("RR");
+    if (upper === "GM") return sellerNameFromAlias("GM");
+    return name;
+  };
+  const profitSellerName = (code: "RR" | "GM") => canonicalSellerName(code);
   const sellerProfitAllocationsFor = (sale: Sale) => {
     const customer = customerForSale(sale);
     const distributableProfit = sellerProfitPoolFor(sale);
-    const assignedSeller = sale.sellerName || customer?.assignedSeller || "Sin vendedor";
+    const assignedSeller = canonicalSellerName(sale.sellerName || customer?.assignedSeller);
     const assignedPercentage = Math.min(100, Math.max(0, Number(customer?.profitPercentage || 0)));
     const rrGmPercentage = (100 - assignedPercentage) / 2;
     const allocations = [
@@ -1822,7 +1833,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   };
   const sellerProfitFor = (sale: Sale, sellerName?: string) => {
     const allocations = sellerProfitAllocationsFor(sale);
-    if (sellerName) return allocations.find((allocation) => allocation.sellerName === sellerName)?.amount ?? 0;
+    if (sellerName) return allocations.find((allocation) => allocation.sellerName === canonicalSellerName(sellerName))?.amount ?? 0;
     return allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
   };
   const reportSaleRows = useMemo(() => salesRows.filter((sale) => {
@@ -1831,7 +1842,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const items = invoiceItemsFor(sale);
     const text = [
       sale.customer,
-      sale.sellerName,
+      canonicalSellerName(sale.sellerName),
       sale.invoiceNumber,
       sale.pickupNumber,
       sale.purchaseOrder,
@@ -1841,7 +1852,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       ...items.flatMap((item) => [item.product, item.presentation, item.size, item.label, productAlias(item.product)]),
     ].join(" ").toLocaleLowerCase();
     return text.includes(reportSearch);
-  }), [reportSearch, reportFromDate, reportToDate, salesRows, products]);
+  }), [reportSearch, reportFromDate, reportToDate, salesRows, products, users]);
 
   const reportInventoryRows = useMemo(() => inventoryLoadGroups.filter((group) => {
     const date = group.first.receivedDate || group.first.loadDate;
@@ -1894,7 +1905,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         sale,
         item,
         customer: sale.customer,
-        seller: sale.sellerName || customerForSale(sale)?.assignedSeller || "Sin vendedor",
+        seller: canonicalSellerName(sale.sellerName || customerForSale(sale)?.assignedSeller),
         product: productAlias(item.product),
         productDetail: invoiceItemDescription(item),
         importInvoice: importInvoiceForReportLine(sale, item),
@@ -1906,7 +1917,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         invoiceValue: total + adjustmentShare,
       };
     });
-  }), [reportSaleRows, inventoryLotById, products, partners]);
+  }), [reportSaleRows, inventoryLotById, products, partners, users]);
   const reportSalesByCustomerRows = useMemo(() => groupSalesReportLines(reportLineRows, (row) => row.customer), [reportLineRows]);
   const reportSalesBySellerRows = useMemo(() => groupSalesReportLines(reportLineRows, (row) => row.seller), [reportLineRows]);
   const reportSalesByProductRows = useMemo(() => groupSalesReportLines(reportLineRows, (row) => row.product), [reportLineRows]);
@@ -1934,7 +1945,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const reportSellerProfitRows = useMemo(() => {
     const groups = new Map<string, { sellerName: string; sales: Sale[]; boxes: number; saleTotal: number; profit: number; sellerProfit: number; paid: number }>();
     const ensure = (sellerName: string) => {
-      const key = sellerName || "Sin vendedor";
+      const key = canonicalSellerName(sellerName);
       const existing = groups.get(key);
       if (existing) return existing;
       const created = { sellerName: key, sales: [] as Sale[], boxes: 0, saleTotal: 0, profit: 0, sellerProfit: 0, paid: 0 };
@@ -1953,7 +1964,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       });
     });
     sellerLiquidations.forEach((liquidation) => {
-      ensure(liquidation.sellerName).paid += Number(liquidation.amount || 0);
+      ensure(canonicalSellerName(liquidation.sellerName)).paid += Number(liquidation.amount || 0);
     });
     return Array.from(groups.values())
       .map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length }))
@@ -1984,7 +1995,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const administrationSellerRows = useMemo(() => {
     const rows = new Map<string, { sellerName: string; sales: Sale[]; boxes: number; saleTotal: number; profit: number; sellerProfit: number; paid: number }>();
     const ensure = (sellerName: string) => {
-      const key = sellerName || "Sin vendedor";
+      const key = canonicalSellerName(sellerName);
       const existing = rows.get(key);
       if (existing) return existing;
       const created = { sellerName: key, sales: [] as Sale[], boxes: 0, saleTotal: 0, profit: 0, sellerProfit: 0, paid: 0 };
@@ -2003,12 +2014,12 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       });
     });
     sellerLiquidations.forEach((liquidation) => {
-      ensure(liquidation.sellerName).paid += Number(liquidation.amount || 0);
+      ensure(canonicalSellerName(liquidation.sellerName)).paid += Number(liquidation.amount || 0);
     });
     return Array.from(rows.values()).map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length })).sort((a, b) => b.balance - a.balance);
   }, [salesRows, users, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
 
-  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), profitSellerName("RR"), profitSellerName("GM"), ...salesRows.flatMap((sale) => sellerProfitAllocationsFor(sale).map((allocation) => allocation.sellerName)), ...sellerLiquidations.map((item) => item.sellerName)])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
+  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), profitSellerName("RR"), profitSellerName("GM"), ...salesRows.flatMap((sale) => sellerProfitAllocationsFor(sale).map((allocation) => allocation.sellerName)), ...sellerLiquidations.map((item) => canonicalSellerName(item.sellerName))])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
   const administrationTotals = useMemo(() => ({
     generated: administrationSellerRows.reduce((sum, row) => sum + row.sellerProfit, 0),
     paid: sellerLiquidations.reduce((sum, item) => sum + Number(item.amount || 0), 0),
@@ -2161,7 +2172,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setSaveState("Guardando...");
     const payload = {
       saleDate: form.saleDate, operationType: form.operationType, supplier: form.supplier, inventoryLotId: firstLine?.inventoryLotId || (form.inventoryLotId ? Number(form.inventoryLotId) : null),
-      customer: form.customer, sellerName: form.sellerName || null, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse, pickupNumber: form.pickupNumber,
+      customer: form.customer, sellerName: form.sellerName ? canonicalSellerName(form.sellerName) : null, purchaseOrder: form.purchaseOrder, warehouse: form.warehouse, pickupNumber: form.pickupNumber,
       boxes: lineBoxes || Number(form.boxes),
       product: firstLine?.product || form.product,
       presentation: firstLine?.presentation || form.presentation,
@@ -2401,7 +2412,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         </section>
         <section className="sales-panel administration-history">
           <div className="panel-heading"><div><h2>Historial de liquidaciones</h2><p>Pagos registrados a vendedores.</p></div><span className="record-count">{sellerLiquidations.length} movimientos</span></div>
-          <div className="table-wrap administration-table"><table><thead><tr><th>Fecha</th><th>Vendedor</th><th className="numeric">Monto</th><th>Nota</th><th>Registro</th></tr></thead><tbody>{sellerLiquidations.map((item) => <tr key={item.id}><td>{formatDate(item.liquidationDate)}</td><td><strong>{item.sellerName}</strong></td><td className="numeric strong-number">{money.format(item.amount)}</td><td>{item.notes || "Sin nota"}</td><td>{item.createdAt ? new Date(item.createdAt).toLocaleString("es-MX") : "N/A"}</td></tr>)}</tbody></table></div>
+          <div className="table-wrap administration-table"><table><thead><tr><th>Fecha</th><th>Vendedor</th><th className="numeric">Monto</th><th>Nota</th><th>Registro</th></tr></thead><tbody>{sellerLiquidations.map((item) => <tr key={item.id}><td>{formatDate(item.liquidationDate)}</td><td><strong>{canonicalSellerName(item.sellerName)}</strong></td><td className="numeric strong-number">{money.format(item.amount)}</td><td>{item.notes || "Sin nota"}</td><td>{item.createdAt ? new Date(item.createdAt).toLocaleString("es-MX") : "N/A"}</td></tr>)}</tbody></table></div>
           {!sellerLiquidations.length && <div className="catalog-empty"><strong>Aun no hay liquidaciones registradas</strong><span>Cuando pagues utilidad a un vendedor, registrala desde el formulario superior.</span></div>}
         </section>
       </section>}
@@ -2442,13 +2453,13 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
             ] as Array<[ReportTab, string]>).map(([value, label]) => <button type="button" key={value} className={reportTab === value ? "active" : ""} onClick={() => setReportTab(value)}>{label}</button>)}
           </div>
 
-          {reportTab === "sales" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Operacion</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th>Bodega</th><th className="numeric">Cajas</th><th className="numeric">Total</th><th className="numeric">Utilidad</th><th>Factura</th></tr></thead><tbody>{reportSaleRows.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td><strong>{sale.customer}</strong><small>{sale.sellerName || "Sin vendedor asignado"}</small></td><td><span className={`operation-tag ${sale.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{sale.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale)}</td><td>{sale.warehouse}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className="numeric strong-number">{money.format(saleProfitFor(sale))}</td><td>{sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(sale)}><span className="invoice-chip invoice-ok">OK</span><small>{sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td></tr>)}</tbody></table></div>}
+          {reportTab === "sales" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Operacion</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th>Bodega</th><th className="numeric">Cajas</th><th className="numeric">Total</th><th className="numeric">Utilidad</th><th>Factura</th></tr></thead><tbody>{reportSaleRows.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td><strong>{sale.customer}</strong><small>{canonicalSellerName(sale.sellerName) || "Sin vendedor asignado"}</small></td><td><span className={`operation-tag ${sale.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{sale.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale)}</td><td>{sale.warehouse}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className="numeric strong-number">{money.format(saleProfitFor(sale))}</td><td>{sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(sale)}><span className="invoice-chip invoice-ok">OK</span><small>{sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td></tr>)}</tbody></table></div>}
 
           {reportTab === "inventory" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha carga</th><th>Fecha entrada</th><th>Factura #</th><th>Proveedor</th><th>Producto</th><th>Bodega</th><th className="numeric">Cajas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total</th><th className="numeric">Costo/caja</th><th>Estado</th></tr></thead><tbody>{reportInventoryRows.map((group) => { const lot = group.first; const aliases = Array.from(new Set(group.lots.map((item) => productAlias(item.product)))); const totalImportCost = group.lots.reduce((sum, item) => sum + (item.totalImportCost || 0), 0); const unitCost = group.totalBoxes ? totalImportCost / group.totalBoxes : lot.unitCost; return <tr key={group.key}><td>{formatDate(lot.loadDate || null)}</td><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.pickupNumber || "N/A"}</strong></td><td>{lot.supplier || "N/A"}</td><td><button type="button" className="multi-product-button" onClick={() => setInventoryDetailLots(group.lots)}><strong>{aliases.join(" / ")}</strong><small>{group.lots.length > 1 ? `${group.lots.length} productos - Ver detalle` : [lot.product, lot.size, lot.presentation, lot.label].filter(Boolean).join(" - ") || "N/A"}</small></button></td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{number.format(group.totalBoxes)}</td><td className="numeric strong-number">{number.format(group.availableBoxes)}</td><td className="numeric strong-number">{money.format(totalImportCost)}</td><td className="numeric">{unitCost == null ? "N/A" : money.format(unitCost)}</td><td>{group.allReceived ? <span className="status-tag ok">Received</span> : <span className="status-tag warning">En transito</span>}</td></tr>; })}</tbody></table></div>}
 
           {reportTab === "collections" && <div className="table-wrap report-table"><table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Vencimiento</th><th>Antiguedad</th><th>PO / Pickup</th><th>Estatus</th><th className="numeric">Saldo</th><th></th></tr></thead><tbody>{reportCollectionRows.map((sale) => { const status = collectionStatus(sale); const days = overdueDays(sale.dueDate); return <tr key={sale.id}><td><strong>#{sale.invoiceNumber}</strong></td><td>{sale.customer}</td><td>{formatDate(sale.saleDate)}</td><td>{formatDate(sale.dueDate)}</td><td><span className={`aging-chip ${days > 90 ? "critical" : days ? "overdue" : "current"}`}>{agingLabel(sale)}</span></td><td><strong>{sale.purchaseOrder || "N/A"}</strong><small>Pickup #{sale.pickupNumber}</small></td><td><span className={`collection-status ${status.toLocaleLowerCase()}`}>{status === "PAGADAS" ? "Pagada" : status === "VENCIDAS" ? "Vencida" : "Vigente"}</span></td><td className="numeric strong-number">{money.format(status === "PAGADAS" ? 0 : sale.total ?? 0)}</td><td><button type="button" className="edit-button" onClick={() => openInvoicePreview(sale)}>Ver factura</button></td></tr>; })}</tbody></table></div>}
 
-          {reportTab === "profit" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{reportProfitRows.map((row, index) => <tr key={row.sale.id ?? `${row.sale.pickupNumber}-${index}`}><td>{formatDate(row.sale.saleDate)}</td><td>{row.sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row.sale)}><span className="invoice-chip invoice-ok">OK</span><small>{row.sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td><td><strong>{row.sale.customer}</strong><small>{row.sale.sellerName || "Sin vendedor"}</small></td><td>{row.sale.pickupNumber || "N/A"}</td><td>{productCell(row.sale)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.sales)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.boxes ? row.profit / row.boxes : 0)}</td><td className="numeric">{money.format(row.sellerProfit)}</td></tr>)}</tbody></table></div>}
+          {reportTab === "profit" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{reportProfitRows.map((row, index) => <tr key={row.sale.id ?? `${row.sale.pickupNumber}-${index}`}><td>{formatDate(row.sale.saleDate)}</td><td>{row.sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row.sale)}><span className="invoice-chip invoice-ok">OK</span><small>{row.sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td><td><strong>{row.sale.customer}</strong><small>{canonicalSellerName(row.sale.sellerName)}</small></td><td>{row.sale.pickupNumber || "N/A"}</td><td>{productCell(row.sale)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.sales)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.boxes ? row.profit / row.boxes : 0)}</td><td className="numeric">{money.format(row.sellerProfit)}</td></tr>)}</tbody></table></div>}
 
           {reportTab === "importProfit" && <div className="table-wrap report-table"><table><thead><tr><th>Factura carga</th><th>Proveedor</th><th>Bodega</th><th>Productos</th><th className="numeric">Ventas</th><th className="numeric">Cajas vendidas</th><th className="numeric">Venta total</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th></tr></thead><tbody>{reportImportedLoadProfitRows.map((row) => <tr key={row.key}><td><button type="button" className="invoice-number-button" onClick={() => setImportLoadDetail({ loadReference: row.loadReference, sales: row.sales })}><strong>{row.loadReference}</strong><small>{row.sales.map((sale) => sale.invoiceNumber || sale.pickupNumber).filter(Boolean).join(" / ") || "Sin facturas"}</small></button></td><td>{row.supplier}</td><td>{row.warehouse}</td><td>{row.productLabel || "N/A"}</td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profitPerBox < 0 ? "negative-number" : ""}`}>{money.format(row.profitPerBox)}</td></tr>)}</tbody></table></div>}
 
@@ -2582,7 +2593,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           </section>}
 
           {(form.operationType === "DIRECT_RESALE" || selectedLot) && <section className="form-section sale-section"><div className="form-section-heading"><span>2</span><div><h3>Información de la venta</h3><p>Datos del cliente, entrega y precio de venta.</p></div></div>
-            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller || ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega de Pickup<select required value={selectedSaleWarehouse?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{coldStorages.map((item) => <option key={`catalog:${item.id}`} value={item.id}>{item.name}</option>)}{registeredSaleWarehouses.map((name) => <option key={`legacy:${name}`} value={`legacy:${name}`}>{name}</option>)}{form.warehouse && !selectedSaleWarehouse && !registeredSaleWarehouses.includes(form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}<option value="__new__">＋ Agregar bodega</option></select>{selectedSaleWarehouse && <small className="field-help">{selectedSaleWarehouse.address} · {formatPhone(selectedSaleWarehouse.phone)}</small>}</label><label>SHIP TO<input list="ship-to-options" value={form.shipTo} onChange={(e) => setForm({...form, shipTo:e.target.value})} placeholder="Ciudad, Estado o términos de venta" /><datalist id="ship-to-options"><option value="FOB McAllen" /><option value="FOB Nogales" /><option value="Delivered" /></datalist></label><label>Día de pickup<input min={localDateKey()} type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /><small className="field-help">No puede ser anterior al día actual.</small></label></div>
+            <div className="form-grid"><label>Fecha de venta<input required type="date" value={form.saleDate} onChange={(e) => setForm({...form, saleDate:e.target.value})} /></label><label>Cliente / a quién se vendió<select required value={form.customer} onChange={(e) => { if (e.target.value === "__new__") return void openPartnerForm("CUSTOMER", "saleCustomer"); const customer = partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === e.target.value); setForm({...form, customer:e.target.value, sellerName:customer?.assignedSeller ? canonicalSellerName(customer.assignedSeller) : ""}); }}><option value="">Selecciona un cliente</option>{partners.filter((partner) => partner.partnerType === "CUSTOMER").map((partner) => <option key={partner.id} value={partner.name}>{partner.name}</option>)}<option value="__new__">＋ Agregar nuevo cliente</option></select></label><label>Vendedor<input readOnly value={form.sellerName} placeholder="Asignado desde el cliente" /></label><label>PO# del cliente<input value={form.purchaseOrder} onChange={(e) => setForm({...form, purchaseOrder:e.target.value})} /></label><label>Bodega de Pickup<select required value={selectedSaleWarehouse?.id || (form.warehouse ? `legacy:${form.warehouse}` : "")} onChange={(e) => chooseSaleWarehouse(e.target.value)}><option value="">Selecciona una bodega</option>{coldStorages.map((item) => <option key={`catalog:${item.id}`} value={item.id}>{item.name}</option>)}{registeredSaleWarehouses.map((name) => <option key={`legacy:${name}`} value={`legacy:${name}`}>{name}</option>)}{form.warehouse && !selectedSaleWarehouse && !registeredSaleWarehouses.includes(form.warehouse) && <option value={`legacy:${form.warehouse}`}>{form.warehouse}</option>}<option value="__new__">＋ Agregar bodega</option></select>{selectedSaleWarehouse && <small className="field-help">{selectedSaleWarehouse.address} · {formatPhone(selectedSaleWarehouse.phone)}</small>}</label><label>SHIP TO<input list="ship-to-options" value={form.shipTo} onChange={(e) => setForm({...form, shipTo:e.target.value})} placeholder="Ciudad, Estado o términos de venta" /><datalist id="ship-to-options"><option value="FOB McAllen" /><option value="FOB Nogales" /><option value="Delivered" /></datalist></label><label>Día de pickup<input min={localDateKey()} type="date" value={form.pickupDate} onChange={(e) => setForm({...form, pickupDate:e.target.value})} /><small className="field-help">No puede ser anterior al día actual.</small></label></div>
           </section>}
 {form.operationType === "IMPORTED_INVENTORY" && saleLineItems.length > 0 && <div className="selected-inventory-sale selected-inventory-sale-final"><div><strong>Productos seleccionados</strong><button type="button" className="secondary-button" onClick={() => { const group = inventoryLoadGroups.find((item) => item.lots.some((lot) => lot.id === Number(form.inventoryLotId))); if (group) openInventorySaleLoad(group); }}>Editar detalle</button></div>{saleLineItems.map((item) => <article key={`${item.inventoryLotId}-${item.product}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.size, item.presentation, item.label].filter(Boolean).join(" - ") || "Sin detalle"}</small></div><span><small>Cajas</small><b>{number.format(Number(item.quantity || 0))}</b></span><span><small>Precio venta</small><b>{money.format(Number(item.unitPrice || 0))}</b></span><span><small>UTILIDAD/CAJA USD</small><b>{money.format(Number(item.unitPrice || 0) - Number(item.purchasePrice || 0))}</b></span><span><small>Total</small><b>{money.format(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</b></span></article>)}</div>}
           <div className="form-total"><span>Total</span><strong>{money.format(saleDraftSummary.total)}</strong><small>Utilidad total: {money.format(saleDraftSummary.profit)}</small><small>Utilidad vendedores: {money.format(saleDraftSummary.sellerProfit)}</small></div>
@@ -2652,7 +2663,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
       {importLoadDetail && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal sale-modal-wide">
         <div className="modal-heading"><div><p className="eyebrow">Utilidad por carga importada</p><h2>Factura de carga {importLoadDetail.loadReference}</h2><p className="modal-intro">Detalle de ventas generadas desde esta carga.</p></div></div>
-        <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura venta</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{importLoadDetail.sales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td><strong>{sale.customer}</strong><small>{sale.sellerName || "Sin vendedor"}</small></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale, true)}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric strong-number ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric">{money.format(sellerProfitFor(sale))}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura venta</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{importLoadDetail.sales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td><strong>{sale.customer}</strong><small>{canonicalSellerName(sale.sellerName)}</small></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale, true)}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric strong-number ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric">{money.format(sellerProfitFor(sale))}</td></tr>)}</tbody></table></div>
         <div className="modal-actions"><button type="button" className="primary-button" onClick={() => setImportLoadDetail(null)}>Ok</button></div>
       </section></div>}
 
