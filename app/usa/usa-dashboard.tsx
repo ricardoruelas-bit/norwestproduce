@@ -25,8 +25,11 @@ type InventoryEntryItem = { product: string; presentation: string; size: string;
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
 type AdjustmentLineItem = InvoiceItem & { noAdjustment?: boolean };
-type ImportQuoteItem = { product: string; weight: string; weightUnit: "KG" | "LBS"; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; mexicoCostsCurrency: Currency; usCostsUsd: string; usCostsCurrency: Currency; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; overweightCurrency: Currency; otherCostsUsd: string; otherCostsCurrency: Currency; marketPriceUsd: string; exchangeRate: string };
-type ImportQuoteNumberField = "weight" | "pallets" | "boxes" | "boxesPerPallet" | "purchasePriceMxn" | "freightMxn" | "mexicoCostsMxn" | "usCostsUsd" | "inspectionUsd" | "coldStorageUsd" | "overweightMxn" | "otherCostsUsd" | "marketPriceUsd" | "exchangeRate";
+type ImportQuoteProduct = { product: string; weight: string; weightUnit: "KG" | "LBS"; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; marketPriceUsd: string };
+type ImportQuoteItem = ImportQuoteProduct & { products: ImportQuoteProduct[]; freightMxn: string; mexicoCostsMxn: string; mexicoCostsCurrency: Currency; usCostsUsd: string; usCostsCurrency: Currency; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; overweightCurrency: Currency; otherCostsUsd: string; otherCostsCurrency: Currency; exchangeRate: string };
+type ImportQuoteProductNumberField = "weight" | "pallets" | "boxes" | "boxesPerPallet" | "purchasePriceMxn" | "marketPriceUsd";
+type ImportQuoteExpenseNumberField = "freightMxn" | "mexicoCostsMxn" | "usCostsUsd" | "inspectionUsd" | "coldStorageUsd" | "overweightMxn" | "otherCostsUsd" | "exchangeRate";
+type ImportQuoteNumberField = ImportQuoteProductNumberField | ImportQuoteExpenseNumberField;
 const importQuoteIntegerFields = new Set<ImportQuoteNumberField>(["pallets", "boxes", "boxesPerPallet"]);
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
@@ -228,7 +231,8 @@ const blankInventory = {
   attachments: [] as string[], costAttachments: {} as Record<CostKey, string[]>,
 };
 const blankInventoryItem: InventoryEntryItem = { product: "", presentation: "", size: "", label: "", totalBoxes: "", boxesPerPallet: "", purchasePrice: "", purchaseCurrency: "MXN" };
-const blankImportQuoteItem: ImportQuoteItem = { product: "", weight: "", weightUnit: "LBS", pallets: "", boxes: "", boxesPerPallet: "", purchasePriceMxn: "", freightMxn: "", mexicoCostsMxn: "", mexicoCostsCurrency: "MXN", usCostsUsd: "", usCostsCurrency: "USD", inspectionUsd: "", coldStorageUsd: "", overweightMxn: "", overweightCurrency: "MXN", otherCostsUsd: "", otherCostsCurrency: "USD", marketPriceUsd: "", exchangeRate: "" };
+const blankImportQuoteProduct: ImportQuoteProduct = { product: "", weight: "", weightUnit: "LBS", pallets: "", boxes: "", boxesPerPallet: "", purchasePriceMxn: "", marketPriceUsd: "" };
+const blankImportQuoteItem: ImportQuoteItem = { ...blankImportQuoteProduct, products: [{ ...blankImportQuoteProduct }], freightMxn: "", mexicoCostsMxn: "", mexicoCostsCurrency: "MXN", usCostsUsd: "", usCostsCurrency: "USD", inspectionUsd: "", coldStorageUsd: "", overweightMxn: "", overweightCurrency: "MXN", otherCostsUsd: "", otherCostsCurrency: "USD", exchangeRate: "" };
 
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "", boxesPerPallet: "" };
 const blankColdStorage = { name: "", address: "", phone: "", stateCode: "", stateName: "", city: "", street: "", exteriorNumber: "", interiorNumber: "", postalCode: "" };
@@ -1306,12 +1310,40 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
   }
 
-  function updateImportQuoteNumber(index: number, field: ImportQuoteNumberField, value: string) {
+  function updateImportQuoteNumber(index: number, field: ImportQuoteExpenseNumberField, value: string) {
     updateImportQuoteItem(index, { [field]: cleanQuoteNumberInput(value) } as Partial<ImportQuoteItem>);
   }
 
-  function formatImportQuoteNumber(index: number, field: ImportQuoteNumberField) {
+  function formatImportQuoteNumber(index: number, field: ImportQuoteExpenseNumberField) {
     setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: importQuoteIntegerFields.has(field) ? formatQuoteIntegerInput(item[field]) : formatQuoteNumberInput(item[field]) } : item));
+  }
+
+  function quoteProductsFor(item: ImportQuoteItem) {
+    return item.products?.length ? item.products : [{ product: item.product, weight: item.weight, weightUnit: item.weightUnit, pallets: item.pallets, boxes: item.boxes, boxesPerPallet: item.boxesPerPallet, purchasePriceMxn: item.purchasePriceMxn, marketPriceUsd: item.marketPriceUsd }];
+  }
+
+  function updateImportQuoteProduct(index: number, productIndex: number, changes: Partial<ImportQuoteProduct>) {
+    setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, products: quoteProductsFor(item).map((product, lineIndex) => lineIndex === productIndex ? { ...product, ...changes } : product) } : item));
+  }
+
+  function updateImportQuoteProductNumber(index: number, productIndex: number, field: ImportQuoteProductNumberField, value: string) {
+    updateImportQuoteProduct(index, productIndex, { [field]: cleanQuoteNumberInput(value) } as Partial<ImportQuoteProduct>);
+  }
+
+  function formatImportQuoteProductNumber(index: number, productIndex: number, field: ImportQuoteProductNumberField) {
+    setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, products: quoteProductsFor(item).map((product, lineIndex) => lineIndex === productIndex ? { ...product, [field]: importQuoteIntegerFields.has(field) ? formatQuoteIntegerInput(product[field]) : formatQuoteNumberInput(product[field]) } : product) } : item));
+  }
+
+  function addImportQuoteProduct(index: number) {
+    setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, products: [...quoteProductsFor(item), { ...blankImportQuoteProduct }] } : item));
+  }
+
+  function removeImportQuoteProduct(index: number, productIndex: number) {
+    setImportQuoteItems((current) => current.map((item, itemIndex) => {
+      if (itemIndex !== index) return item;
+      const products = quoteProductsFor(item);
+      return products.length === 1 ? item : { ...item, products: products.filter((_, lineIndex) => lineIndex !== productIndex) };
+    }));
   }
 
   function moveToNextQuoteField(event: KeyboardEvent<HTMLElement>) {
@@ -1689,27 +1721,41 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
   const importQuoteSummary = useMemo(() => {
     const rows = importQuoteItems.map((item, index) => {
-      const pallets = parseQuoteNumber(item.pallets);
-      const boxesPerPallet = parseQuoteNumber(item.boxesPerPallet);
-      const calculatedBoxes = pallets && boxesPerPallet ? pallets * boxesPerPallet : 0;
-      const boxes = calculatedBoxes || parseQuoteNumber(item.boxes);
+      const products = quoteProductsFor(item).map((product, productIndex) => {
+        const pallets = parseQuoteNumber(product.pallets);
+        const boxesPerPallet = parseQuoteNumber(product.boxesPerPallet);
+        const calculatedBoxes = pallets && boxesPerPallet ? pallets * boxesPerPallet : 0;
+        const boxes = calculatedBoxes || parseQuoteNumber(product.boxes);
+        return { key: `${product.product || "producto"}-${productIndex}`, product, pallets, boxesPerPallet, calculatedBoxes, boxes };
+      });
+      const pallets = products.reduce((sum, product) => sum + product.pallets, 0);
+      const boxes = products.reduce((sum, product) => sum + product.boxes, 0);
       const rate = parseQuoteNumber(item.exchangeRate);
       const mxnToUsd = (value: string) => rate ? parseQuoteNumber(value) / rate : 0;
       const amountToUsd = (value: string, currency: Currency) => currency === "MXN" ? mxnToUsd(value) : parseQuoteNumber(value);
-      const purchaseUsd = mxnToUsd(item.purchasePriceMxn);
       const freightMxn = parseQuoteNumber(item.freightMxn);
       const importTotalUsd = mxnToUsd(String(freightMxn * 1.16)) + amountToUsd(item.mexicoCostsMxn, item.mexicoCostsCurrency) + amountToUsd(item.usCostsUsd, item.usCostsCurrency) + parseQuoteNumber(item.inspectionUsd) + (parseQuoteNumber(item.coldStorageUsd) * pallets) + amountToUsd(item.overweightMxn, item.overweightCurrency) + amountToUsd(item.otherCostsUsd, item.otherCostsCurrency);
       const importTotalMxn = rate ? importTotalUsd * rate : 0;
       const importCostBox = boxes ? importTotalUsd / boxes : 0;
       const importCostBoxMxn = boxes ? importTotalMxn / boxes : 0;
-      const landedCost = purchaseUsd + importCostBox;
+      const productRows = products.map((line) => {
+        const purchaseUsd = mxnToUsd(line.product.purchasePriceMxn);
+        const landedCost = purchaseUsd + importCostBox;
+        const landedCostMxn = rate ? landedCost * rate : 0;
+        const marketPrice = parseQuoteNumber(line.product.marketPriceUsd);
+        const profitBox = marketPrice - landedCost;
+        const profitBoxMxn = rate ? profitBox * rate : 0;
+        const totalProfit = profitBox * line.boxes;
+        const totalProfitMxn = rate ? totalProfit * rate : 0;
+        return { ...line, purchaseUsd, landedCost, landedCostMxn, marketPrice, profitBox, profitBoxMxn, totalProfit, totalProfitMxn };
+      });
+      const landedCost = boxes ? productRows.reduce((sum, product) => sum + product.landedCost * product.boxes, 0) / boxes : 0;
       const landedCostMxn = rate ? landedCost * rate : 0;
-      const marketPrice = parseQuoteNumber(item.marketPriceUsd);
-      const profitBox = marketPrice - landedCost;
+      const profitBox = boxes ? productRows.reduce((sum, product) => sum + product.profitBox * product.boxes, 0) / boxes : 0;
       const profitBoxMxn = rate ? profitBox * rate : 0;
-      const totalProfit = profitBox * boxes;
+      const totalProfit = productRows.reduce((sum, product) => sum + product.totalProfit, 0);
       const totalProfitMxn = rate ? totalProfit * rate : 0;
-      return { key: `${item.product || "producto"}-${index}`, item, pallets, boxes, calculatedBoxes, purchaseUsd, importTotalUsd, importCostBox, importCostBoxMxn, landedCost, landedCostMxn, marketPrice, profitBox, profitBoxMxn, totalProfit, totalProfitMxn };
+      return { key: `carga-${index}`, item, products: productRows, pallets, boxes, importTotalUsd, importCostBox, importCostBoxMxn, landedCost, landedCostMxn, profitBox, profitBoxMxn, totalProfit, totalProfitMxn };
     });
     return {
       rows,
@@ -1887,32 +1933,39 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       {section === "importQuote" && <section className="erp-content">
         <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Cotización para Importar</h1></div></header>
         <section className="sales-panel import-quote-panel">
-          <div className="panel-heading"><div><h2>Análisis de posible compra en México</h2><p>Consulta interna para estimar costo puesto en USA. No afecta inventario, ventas ni facturación.</p></div><span className="record-count">{importQuoteItems.length} productos</span></div>
+          <div className="panel-heading"><div><h2>Análisis de posible compra en México</h2><p>Consulta interna para estimar costo puesto en USA. No afecta inventario, ventas ni facturación.</p></div><span className="record-count">{importQuoteSummary.rows.reduce((sum, row) => sum + row.products.length, 0)} productos</span></div>
           <div className="import-quote-list">{importQuoteItems.map((item, index) => {
             const result = importQuoteSummary.rows[index];
-            const productOptionsId = `import-quote-products-${index}`;
+            const quoteProducts = quoteProductsFor(item);
             return <article className="import-quote-card import-quote-sheet" key={index} onKeyDown={moveToNextQuoteField}>
-              <div className="quote-sheet-toolbar"><strong>Producto {index + 1}</strong><button type="button" className="sale-line-remove" disabled={importQuoteItems.length === 1} aria-label="Eliminar producto de cotización" onClick={() => removeImportQuoteItem(index)}>×</button></div>
+              <div className="quote-sheet-toolbar"><strong>Carga {index + 1}</strong><button type="button" className="sale-line-remove" disabled={importQuoteItems.length === 1} aria-label="Eliminar cotización" onClick={() => removeImportQuoteItem(index)}>×</button></div>
               <div className="quote-sheet-body">
                 <section className="quote-sheet-left">
                   <div className="quote-sheet-title">Datos del producto</div>
-                  <div className="quote-product-line">
-                    <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={item.product} onChange={(event) => updateImportQuoteItem(index, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
-                    <label><span>Peso</span><div className="quote-weight-field"><input inputMode="decimal" value={item.weight} onBlur={() => formatImportQuoteNumber(index, "weight")} onChange={(event) => updateImportQuoteNumber(index, "weight", event.target.value)} placeholder="Ej. 50" /><select value={item.weightUnit} onChange={(event) => updateImportQuoteItem(index, { weightUnit: event.target.value as "KG" | "LBS" })}><option value="KG">KG</option><option value="LBS">LBS</option></select></div></label>
-                    <button className="primary-button quote-add-product-button" type="button" onClick={addImportQuoteItem}>＋ Agregar producto</button>
-                  </div>
-                  <div className="quote-sheet-row"><span>Cajas/Bultos por pallet</span><input inputMode="decimal" value={item.boxesPerPallet} onBlur={() => formatImportQuoteNumber(index, "boxesPerPallet")} onChange={(event) => updateImportQuoteNumber(index, "boxesPerPallet", event.target.value)} /></div>
-                  <div className="quote-sheet-row"><span>Pallets</span><input inputMode="decimal" value={item.pallets} onBlur={() => formatImportQuoteNumber(index, "pallets")} onChange={(event) => updateImportQuoteNumber(index, "pallets", event.target.value)} /></div>
-                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input inputMode="decimal" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? quoteInteger.format(result.calculatedBoxes) : item.boxes} onBlur={() => formatImportQuoteNumber(index, "boxes")} onChange={(event) => updateImportQuoteNumber(index, "boxes", event.target.value)} /></div>
-                  <div className="quote-sheet-subtitle">Costo x caja o bulto</div>
-                  <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><div className="quote-fixed-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.purchasePriceMxn} onBlur={() => formatImportQuoteNumber(index, "purchasePriceMxn")} onChange={(event) => updateImportQuoteNumber(index, "purchasePriceMxn", event.target.value)} /></span><b>MXN</b></div></div>
-                  <div className="quote-sheet-row"><span>Precio de venta USD</span><div className="quote-fixed-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.marketPriceUsd} onBlur={() => formatImportQuoteNumber(index, "marketPriceUsd")} onChange={(event) => updateImportQuoteNumber(index, "marketPriceUsd", event.target.value)} /></span><b>USD</b></div></div>
+                  <div className="quote-product-items">{quoteProducts.map((product, productIndex) => {
+                    const productOptionsId = `import-quote-products-${index}-${productIndex}`;
+                    const productResult = result?.products[productIndex];
+                    return <div className="quote-product-item" key={productIndex}>
+                      <div className="quote-product-line">
+                        <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={product.product} onChange={(event) => updateImportQuoteProduct(index, productIndex, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
+                        <label><span>Peso</span><div className="quote-weight-field"><input inputMode="decimal" value={product.weight} onBlur={() => formatImportQuoteProductNumber(index, productIndex, "weight")} onChange={(event) => updateImportQuoteProductNumber(index, productIndex, "weight", event.target.value)} placeholder="Ej. 50" /><select value={product.weightUnit} onChange={(event) => updateImportQuoteProduct(index, productIndex, { weightUnit: event.target.value as "KG" | "LBS" })}><option value="KG">KG</option><option value="LBS">LBS</option></select></div></label>
+                        {productIndex === 0 ? <button className="primary-button quote-add-product-button" type="button" onClick={() => addImportQuoteProduct(index)}>＋ Agregar producto</button> : <button type="button" className="sale-line-remove quote-remove-product-button" aria-label="Eliminar producto de la carga" onClick={() => removeImportQuoteProduct(index, productIndex)}>×</button>}
+                      </div>
+                      <div className="quote-sheet-row"><span>Cajas/Bultos por pallet</span><input inputMode="decimal" value={product.boxesPerPallet} onBlur={() => formatImportQuoteProductNumber(index, productIndex, "boxesPerPallet")} onChange={(event) => updateImportQuoteProductNumber(index, productIndex, "boxesPerPallet", event.target.value)} /></div>
+                      <div className="quote-sheet-row"><span>Pallets</span><input inputMode="decimal" value={product.pallets} onBlur={() => formatImportQuoteProductNumber(index, productIndex, "pallets")} onChange={(event) => updateImportQuoteProductNumber(index, productIndex, "pallets", event.target.value)} /></div>
+                      <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input inputMode="decimal" readOnly={Boolean(productResult?.calculatedBoxes)} value={productResult?.calculatedBoxes ? quoteInteger.format(productResult.calculatedBoxes) : product.boxes} onBlur={() => formatImportQuoteProductNumber(index, productIndex, "boxes")} onChange={(event) => updateImportQuoteProductNumber(index, productIndex, "boxes", event.target.value)} /></div>
+                      <div className="quote-sheet-subtitle">Costo x caja o bulto</div>
+                      <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><div className="quote-fixed-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={product.purchasePriceMxn} onBlur={() => formatImportQuoteProductNumber(index, productIndex, "purchasePriceMxn")} onChange={(event) => updateImportQuoteProductNumber(index, productIndex, "purchasePriceMxn", event.target.value)} /></span><b>MXN</b></div></div>
+                      <div className="quote-sheet-row"><span>Precio de venta USD</span><div className="quote-fixed-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={product.marketPriceUsd} onBlur={() => formatImportQuoteProductNumber(index, productIndex, "marketPriceUsd")} onChange={(event) => updateImportQuoteProductNumber(index, productIndex, "marketPriceUsd", event.target.value)} /></span><b>USD</b></div></div>
+                    </div>;
+                  })}</div>
+                  <div className="quote-sheet-row quote-sheet-total-row quote-load-total-row"><span>Total cajas carga</span><input readOnly value={quoteInteger.format(result?.boxes || 0)} /></div>
                 </section>
                 <section className="quote-sheet-right">
                   <div className="quote-sheet-title">Gastos</div>
                   <div className="quote-sheet-row"><span>Tipo de cambio</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.exchangeRate} onBlur={() => formatImportQuoteNumber(index, "exchangeRate")} onChange={(event) => updateImportQuoteNumber(index, "exchangeRate", event.target.value)} placeholder="MXN por USD" /></span></div>
-                  <div className="quote-sheet-row quote-freight-row"><span>Flete + Transfer</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.freightMxn} onBlur={() => formatImportQuoteNumber(index, "freightMxn")} onChange={(event) => updateImportQuoteNumber(index, "freightMxn", event.target.value)} /></span><span>IVA</span><span className="dollar-input"><span>$</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 0.16)} /></span></div>
-                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total Flete</span><span className="dollar-input"><span>$</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 1.16)} /></span></div>
+                  <div className="quote-sheet-row quote-freight-row"><span>Flete + Transfer</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.freightMxn} onBlur={() => formatImportQuoteNumber(index, "freightMxn")} onChange={(event) => updateImportQuoteNumber(index, "freightMxn", event.target.value)} /></span><span>IVA</span><span className="dollar-input quote-calculated-money"><span>$</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 0.16)} /></span></div>
+                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total Flete</span><span className="dollar-input quote-calculated-money"><span>$</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 1.16)} /></span></div>
                   <div className="quote-sheet-row"><span>Gastos aduana MX</span><div className="quote-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.mexicoCostsMxn} onBlur={() => formatImportQuoteNumber(index, "mexicoCostsMxn")} onChange={(event) => updateImportQuoteNumber(index, "mexicoCostsMxn", event.target.value)} /></span><select value={item.mexicoCostsCurrency} onChange={(event) => updateImportQuoteItem(index, { mexicoCostsCurrency: event.target.value as Currency })}><option value="MXN">MXN</option><option value="USD">USD</option></select></div></div>
                   <div className="quote-sheet-row"><span>Gastos aduana USA</span><div className="quote-currency-field"><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.usCostsUsd} onBlur={() => formatImportQuoteNumber(index, "usCostsUsd")} onChange={(event) => updateImportQuoteNumber(index, "usCostsUsd", event.target.value)} /></span><select value={item.usCostsCurrency} onChange={(event) => updateImportQuoteItem(index, { usCostsCurrency: event.target.value as Currency })}><option value="MXN">MXN</option><option value="USD">USD</option></select></div></div>
                   <div className="quote-sheet-row"><span>Inspección USDA</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.inspectionUsd} onBlur={() => formatImportQuoteNumber(index, "inspectionUsd")} onChange={(event) => updateImportQuoteNumber(index, "inspectionUsd", event.target.value)} /></span></div>
