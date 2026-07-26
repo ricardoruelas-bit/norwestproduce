@@ -22,6 +22,7 @@ type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "
 type InventoryEntryItem = { product: string; presentation: string; size: string; label: string; totalBoxes: string; boxesPerPallet: string; purchasePrice: string; purchaseCurrency: Currency };
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
+type AdjustmentLineItem = InvoiceItem & { noAdjustment?: boolean };
 type ImportQuoteItem = { product: string; label: string; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; usCostsUsd: string; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; otherCostsUsd: string; marketPriceUsd: string; exchangeRate: string };
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
@@ -137,6 +138,23 @@ function invoiceItemsFor(sale: Sale): InvoiceItem[] {
   return [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice || 0, purchasePrice: sale.purchasePrice ?? undefined }];
 }
 
+function invoiceItemDescription(item: InvoiceItem) {
+  return [item.product, item.presentation, item.size, item.label].filter(Boolean).join(" - ");
+}
+
+function adjustedInvoiceItemsFromLines(originalItems: InvoiceItem[], adjustmentItems: AdjustmentLineItem[]) {
+  return adjustmentItems.flatMap((item, index) => {
+    const original = originalItems[index] || item;
+    if (item.noAdjustment) return [{ ...original }];
+    const affectedQuantity = Number(item.quantity);
+    const originalQuantity = Number(original.quantity || 0);
+    const remainingQuantity = originalQuantity - affectedQuantity;
+    const rows: InvoiceItem[] = [{ ...original, quantity: affectedQuantity, unitPrice: Number(item.unitPrice) }];
+    if (remainingQuantity > 0) rows.push({ ...original, quantity: remainingQuantity, unitPrice: Number(original.unitPrice) });
+    return rows;
+  });
+}
+
 function originalInvoiceItemsFor(sale: Sale): InvoiceItem[] {
   if (sale.originalInvoiceItems) {
     try {
@@ -242,7 +260,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [invoiceSaveState, setInvoiceSaveState] = useState("");
   const [invoicePreview, setInvoicePreview] = useState<Sale | null>(null);
   const [adjustmentSale, setAdjustmentSale] = useState<Sale | null>(null);
-  const [adjustmentItems, setAdjustmentItems] = useState<InvoiceItem[]>([]);
+  const [adjustmentItems, setAdjustmentItems] = useState<AdjustmentLineItem[]>([]);
   const [adjustmentReason, setAdjustmentReason] = useState<InvoiceAdjustment["reason"]>("CAMBIO DE PRECIO");
   const [adjustmentNotes, setAdjustmentNotes] = useState("");
   const [adjustmentSaveState, setAdjustmentSaveState] = useState("");
@@ -1081,7 +1099,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   function openInvoiceAdjustment(sale: Sale) {
     setAdjustmentPreview(null);
     setAdjustmentSale(sale);
-    setAdjustmentItems(invoiceItemsFor(sale));
+    setAdjustmentItems(invoiceItemsFor(sale).map((item) => ({ ...item, noAdjustment: false })));
     setAdjustmentReason("CAMBIO DE PRECIO");
     setAdjustmentNotes("");
     setAdjustmentSaveState("");
@@ -1099,10 +1117,13 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     event.preventDefault();
     if (!adjustmentSale?.id) return;
     if (!adjustmentNotes.trim()) return setAdjustmentSaveState("Describe brevemente la razón del ajuste.");
-    if (adjustmentItems.some((item) => !item.product.trim() || item.quantity <= 0 || item.unitPrice < 0)) return setAdjustmentSaveState("Revisa las partidas, cantidades y precios.");
+    const originalItems = invoiceItemsFor(adjustmentSale);
+    const adjustedItems = adjustedInvoiceItemsFromLines(originalItems, adjustmentItems);
+    if (adjustmentItems.some((item, index) => !item.noAdjustment && (!item.product.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0 || Number(item.quantity) > Number(originalItems[index]?.quantity || item.quantity) || !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0))) return setAdjustmentSaveState("Revisa productos, bultos/cajas a ajustar y precio. La cantidad afectada no puede ser mayor que la factura original.");
+    if (!adjustedItems.length) return setAdjustmentSaveState("No hay productos para ajustar.");
     setAdjustmentSaveState("Registrando ajuste…");
     try {
-      const response = await fetch("/api/usa/invoice-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleId: adjustmentSale.id, reason: adjustmentReason, notes: adjustmentNotes, items: adjustmentItems }) });
+      const response = await fetch("/api/usa/invoice-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleId: adjustmentSale.id, reason: adjustmentReason, notes: adjustmentNotes, items: adjustedItems }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo registrar el ajuste.");
       replaceSale(data.sale);
@@ -1375,7 +1396,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   function openInventorySaleLoad(group: InventoryLoadGroup) {
     setInventorySaleWarning(null);
     setInventorySaleLots(group.lots);
-    const existingItems = editingSale?.operationType === "IMPORTED_INVENTORY" ? invoiceItemsFor(editingSale) : [];
+    const existingItems = saleLineItems.length ? saleLineItems : editingSale?.operationType === "IMPORTED_INVENTORY" ? invoiceItemsFor(editingSale) : [];
     setInventorySaleDraft(group.lots
       .filter((lot) => availableForSaleLot(lot) > 0 || existingItems.some((item) => Number(item.inventoryLotId) === lot.id) || editingSale?.inventoryLotId === lot.id)
       .map((lot) => {
@@ -1653,6 +1674,11 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const sellerProfit = Math.max(0, profit - norwestShare) * (Number(customer?.profitPercentage || 0) / 100);
     return { total, profit, sellerProfit };
   }, [companyForm.norwestProfitPercentage, form, partners, saleLineItems]);
+
+  const adjustmentOriginalItems = adjustmentSale ? invoiceItemsFor(adjustmentSale) : [];
+  const adjustmentComputedItems = adjustedInvoiceItemsFromLines(adjustmentOriginalItems, adjustmentItems);
+  const adjustmentOriginalTotal = adjustmentOriginalItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  const adjustmentComputedTotal = adjustmentComputedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
   async function saveSale(event: FormEvent) {
     event.preventDefault();
@@ -2082,8 +2108,8 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       {adjustmentSale && <div className="modal-backdrop adjustment-modal-backdrop"><form className="sale-modal sale-modal-wide adjustment-modal" onSubmit={saveInvoiceAdjustment}>
         <div className="modal-heading"><div><p className="eyebrow">Ajuste posterior a facturación</p><h2>Factura {adjustmentSale.invoiceNumber}</h2><p className="modal-intro">La factura original permanecerá intacta. El sistema generará una nota ligada a ella por la diferencia.</p></div></div>
         <section className="form-section adjustment-reason-section"><div className="form-grid"><label>Motivo<select value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value as InvoiceAdjustment["reason"])}><option>CAMBIO DE PRECIO</option><option>CALIDAD</option><option>RECHAZO PARCIAL</option><option>PRODUCTO ELIMINADO</option><option>CARGA POR ERROR</option><option>OTRO</option></select></label><label className="span-2">Descripción del ajuste<input required value={adjustmentNotes} onChange={(event) => setAdjustmentNotes(event.target.value)} placeholder="Ej. Rechazo parcial por calidad; se acreditan 25 cajas" /></label></div></section>
-        <div className="adjustment-items">{adjustmentItems.map((item, index) => <article key={`${item.product}-${index}`}><label><span>Producto</span><select disabled value={item.product}><option value={item.product}>{item.product}</option></select></label><label><span>Bultos/Cajas a Ajustar</span><input min="1" step="1" type="number" value={item.quantity} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, quantity: Number(event.target.value) } : row))} /></label><label><span>Precio</span>{moneyField(item.unitPrice, (value) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unitPrice: Number(value) } : row)))}</label><strong>{money.format(item.quantity * item.unitPrice)}</strong><button type="button" aria-label={`Eliminar ${item.product}`} onClick={() => setAdjustmentItems((current) => current.filter((_, rowIndex) => rowIndex !== index))}>×</button></article>)}</div>
-        <div className="adjustment-summary"><span>Total vigente <strong>{money.format(invoiceItemsFor(adjustmentSale).reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span><span>Nuevo total <strong>{money.format(adjustmentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span><span>Diferencia <strong>{money.format(adjustmentItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) - invoiceItemsFor(adjustmentSale).reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span></div>
+        <div className="adjustment-items">{adjustmentItems.map((item, index) => { const original = adjustmentOriginalItems[index] || item; const remaining = Math.max(0, Number(original.quantity || 0) - Number(item.quantity || 0)); return <article key={`${item.product}-${index}`}><label><span>Producto</span><input readOnly value={invoiceItemDescription(original)} /></label><label><span>Bultos/Cajas a Ajustar</span><input disabled={Boolean(item.noAdjustment)} min="1" max={original.quantity} step="1" type="number" value={item.quantity} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, quantity: Number(event.target.value) } : row))} /></label><label><span>Precio</span>{moneyField(item.unitPrice, (value) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unitPrice: Number(value) } : row)), false, Boolean(item.noAdjustment))}</label><strong>{item.noAdjustment ? money.format(original.quantity * original.unitPrice) : <><span>{money.format(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</span>{remaining > 0 && <small>{number.format(remaining)} cajas quedan a {money.format(original.unitPrice)}</small>}</>}</strong><label className="adjustment-no-change"><input type="checkbox" checked={Boolean(item.noAdjustment)} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, noAdjustment: event.target.checked } : row))} /><span>Sin ajuste</span></label></article>; })}</div>
+        <div className="adjustment-summary"><span>Total vigente <strong>{money.format(adjustmentOriginalTotal)}</strong></span><span>Nuevo total <strong>{money.format(adjustmentComputedTotal)}</strong></span><span>Diferencia <strong>{money.format(adjustmentComputedTotal - adjustmentOriginalTotal)}</strong></span></div>
         {adjustmentSaveState && <p className="form-message">{adjustmentSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoiceAdjustment}>Cancelar</button><button type="submit" className="primary-button">Generar ajuste</button></div>
       </form></div>}
 
