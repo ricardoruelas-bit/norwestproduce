@@ -23,7 +23,7 @@ type InventoryEntryItem = { product: string; presentation: string; size: string;
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
 type AdjustmentLineItem = InvoiceItem & { noAdjustment?: boolean };
-type ImportQuoteItem = { product: string; label: string; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; usCostsUsd: string; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; otherCostsUsd: string; marketPriceUsd: string; exchangeRate: string };
+type ImportQuoteItem = { product: string; weight: string; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; usCostsUsd: string; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; otherCostsUsd: string; marketPriceUsd: string; exchangeRate: string };
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
@@ -155,6 +155,14 @@ function adjustedInvoiceItemsFromLines(originalItems: InvoiceItem[], adjustmentI
   });
 }
 
+function isAdjustedInvoiceItem(item: InvoiceItem, previousItems: InvoiceItem[]) {
+  return previousItems.some((previous) => previous.product === item.product
+    && previous.presentation === item.presentation
+    && previous.size === item.size
+    && previous.label === item.label
+    && previous.unitPrice !== item.unitPrice);
+}
+
 function originalInvoiceItemsFor(sale: Sale): InvoiceItem[] {
   if (sale.originalInvoiceItems) {
     try {
@@ -194,7 +202,7 @@ const blankInventory = {
   attachments: [] as string[], costAttachments: {} as Record<CostKey, string[]>,
 };
 const blankInventoryItem: InventoryEntryItem = { product: "", presentation: "", size: "", label: "", totalBoxes: "", boxesPerPallet: "", purchasePrice: "", purchaseCurrency: "MXN" };
-const blankImportQuoteItem: ImportQuoteItem = { product: "", label: "", pallets: "", boxes: "", boxesPerPallet: "", purchasePriceMxn: "", freightMxn: "", mexicoCostsMxn: "", usCostsUsd: "", inspectionUsd: "", coldStorageUsd: "", overweightMxn: "", otherCostsUsd: "", marketPriceUsd: "", exchangeRate: "" };
+const blankImportQuoteItem: ImportQuoteItem = { product: "", weight: "", pallets: "", boxes: "", boxesPerPallet: "", purchasePriceMxn: "", freightMxn: "", mexicoCostsMxn: "", usCostsUsd: "", inspectionUsd: "", coldStorageUsd: "", overweightMxn: "", otherCostsUsd: "", marketPriceUsd: "", exchangeRate: "" };
 
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "", boxesPerPallet: "" };
 const blankColdStorage = { name: "", address: "", phone: "", stateCode: "", stateName: "", city: "", street: "", exteriorNumber: "", interiorNumber: "", postalCode: "" };
@@ -1842,15 +1850,15 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
             return <article className="import-quote-card" key={index}>
               <div className="import-quote-row-main">
                 <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={item.product} onChange={(event) => updateImportQuoteItem(index, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
-                <label><span>Etiqueta</span><input value={item.label} onChange={(event) => updateImportQuoteItem(index, { label: event.target.value })} placeholder="Genérica, marca, etc." /></label>
+                <label><span>Peso</span><input value={item.weight} onChange={(event) => updateImportQuoteItem(index, { weight: event.target.value })} placeholder="Ej. 50 lbs" /></label>
+                <label><span>Cajas/Bultos por pallet</span><input min="0" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateImportQuoteItem(index, { boxesPerPallet: event.target.value })} /></label>
                 <label><span>Pallets</span><input min="0" step="1" type="number" value={item.pallets} onChange={(event) => updateImportQuoteItem(index, { pallets: event.target.value })} /></label>
-                <label><span>Cajas por pallet</span><input min="0" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateImportQuoteItem(index, { boxesPerPallet: event.target.value })} /></label>
                 <label><span>Total cajas</span><input min="0" step="1" type="number" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? String(result.calculatedBoxes) : item.boxes} onChange={(event) => updateImportQuoteItem(index, { boxes: event.target.value })} /></label>
-                <label><span>Tipo de cambio</span><input min="0" step="0.0001" type="number" value={item.exchangeRate} onChange={(event) => updateImportQuoteItem(index, { exchangeRate: event.target.value })} placeholder="MXN por USD" /></label>
                 <button type="button" className="sale-line-remove" disabled={importQuoteItems.length === 1} aria-label="Eliminar producto de cotización" onClick={() => removeImportQuoteItem(index)}>×</button>
               </div>
               <div className="import-quote-grid">
-                <label><span>Compra MXN/caja</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.purchasePriceMxn} onChange={(event) => updateImportQuoteItem(index, { purchasePriceMxn: event.target.value })} /></span></label>
+                <label><span>Tipo de cambio</span><input min="0" step="0.0001" type="number" value={item.exchangeRate} onChange={(event) => updateImportQuoteItem(index, { exchangeRate: event.target.value })} placeholder="MXN por USD" /></label>
+                <label><span>Compra MXN/caja o bulto</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.purchasePriceMxn} onChange={(event) => updateImportQuoteItem(index, { purchasePriceMxn: event.target.value })} /></span></label>
                 <label><span>Flete + transfer MXN</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.freightMxn} onChange={(event) => updateImportQuoteItem(index, { freightMxn: event.target.value })} /></span></label>
                 <label><span>IVA flete MXN</span><input readOnly value={moneyMxn.format((Number(item.freightMxn) || 0) * 0.16)} /></label>
                 <label><span>Aduana MX total</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.mexicoCostsMxn} onChange={(event) => updateImportQuoteItem(index, { mexicoCostsMxn: event.target.value })} /></span></label>
@@ -2145,7 +2153,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         <article className="print-document commercial-document invoice-document adjustment-print-document">
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block"><h3><span>ADJUSTED INVOICE:</span><b>{adjustmentPreview.sale.invoiceNumber}</b></h3><dl><dt>ADJUSTMENT:</dt><dd>{adjustmentPreview.adjustment.number}</dd><dt>ISSUED:</dt><dd>{formatDocumentDate(adjustmentPreview.adjustment.createdAt.slice(0, 10))}</dd><dt>P.O. #:</dt><dd>{adjustmentPreview.sale.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{adjustmentPreview.sale.pickupNumber}</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(adjustmentPreview.sale.dueDate)}</dd></dl></div></div>
           <div className="document-parties two-columns"><section><h4>BILL TO:</h4><strong>{adjustmentPreview.sale.customer}</strong>{partnerAddress(partners.find((item) => item.partnerType === "CUSTOMER" && item.name === adjustmentPreview.sale.customer)).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{adjustmentPreview.sale.warehouse}</strong><span>Pickup #{adjustmentPreview.sale.pickupNumber}</span></section></div>
-          <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody>{adjustmentPreview.adjustment.adjustedItems.map((item, index) => <tr key={index}><td>{item.product}</td><td>{item.size || "—"}</td><td>{item.label || "—"}</td><td>{item.presentation || "—"}</td><td className="numeric">{number.format(item.quantity)}</td><td className="numeric">{money.format(item.unitPrice)}</td><td className="numeric">{money.format(item.quantity * item.unitPrice)}</td></tr>)}{Array.from({ length: Math.max(0, 5 - adjustmentPreview.adjustment.adjustedItems.length) }).map((_, index) => <tr className="empty-item-row" key={`adjustment-empty-${index}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>CORRECTED TOTAL:</td><td className="numeric">{money.format(adjustmentPreview.adjustment.adjustedTotal)}</td></tr></tfoot></table>
+          <table className="document-items"><thead><tr><th>Description</th><th>Size</th><th>Label</th><th>Unit</th><th className="numeric">Qty</th><th className="numeric">Unit Price</th><th className="numeric">Total</th></tr></thead><tbody>{adjustmentPreview.adjustment.adjustedItems.map((item, index) => <tr key={index}><td>{item.product}{isAdjustedInvoiceItem(item, adjustmentPreview.adjustment.previousItems) && <strong className="adjusted-line-mark">**Adjusted</strong>}</td><td>{item.size || "—"}</td><td>{item.label || "—"}</td><td>{item.presentation || "—"}</td><td className="numeric">{number.format(item.quantity)}</td><td className="numeric">{money.format(item.unitPrice)}</td><td className="numeric">{money.format(item.quantity * item.unitPrice)}</td></tr>)}{Array.from({ length: Math.max(0, 5 - adjustmentPreview.adjustment.adjustedItems.length) }).map((_, index) => <tr className="empty-item-row" key={`adjustment-empty-${index}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}</tbody><tfoot><tr><td colSpan={6}>CORRECTED TOTAL:</td><td className="numeric">{money.format(adjustmentPreview.adjustment.adjustedTotal)}</td></tr></tfoot></table>
           <p className="amount-words">{amountInWords(adjustmentPreview.adjustment.adjustedTotal)}</p><div className="printed-adjustment-detail"><strong>Adjustment detail</strong><span>{adjustmentPreview.adjustment.reason} · {adjustmentPreview.adjustment.notes}</span><span>Original total: {money.format(adjustmentPreview.adjustment.previousTotal)} · Difference: {money.format(adjustmentPreview.adjustment.difference)}</span></div><p className="document-terms invoice-terms">{INVOICE_TERMS}</p>
         </article>
       </section></div>}
