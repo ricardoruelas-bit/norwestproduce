@@ -53,6 +53,7 @@ export type InvoiceAdjustment = {
   createdAt: string;
   reason: "CAMBIO DE PRECIO" | "CALIDAD" | "RECHAZO PARCIAL" | "PRODUCTO ELIMINADO" | "CARGA POR ERROR" | "OTRO";
   notes: string;
+  internalNotes?: string;
   previousItems: InvoiceItem[];
   adjustedItems: InvoiceItem[];
   previousTotal: number;

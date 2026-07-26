@@ -18,7 +18,7 @@ const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be ma
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
 type Section = "dashboard" | "catalogs" | "inventory" | "importQuote" | "invoicing" | "collections" | "reports" | "administration" | "settings";
 type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
-type ReportTab = "sales" | "inventory" | "collections" | "profit" | "importProfit" | "sellerProfit" | "adjustments";
+type ReportTab = "sales" | "inventory" | "collections" | "profit" | "importProfit" | "sellerProfit" | "salesByCustomer" | "salesDetailCustomer" | "salesBySeller" | "salesDetailSeller" | "salesByProduct" | "salesDetailProduct" | "salesByImportInvoice" | "salesDetailImportInvoice" | "adjustments";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
@@ -26,6 +26,8 @@ type InventoryEntryItem = { product: string; presentation: string; size: string;
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
 type AdjustmentLineItem = InvoiceItem & { noAdjustment?: boolean };
+type SalesReportLine = { sale: Sale; item: InvoiceItem; customer: string; seller: string; product: string; productDetail: string; importInvoice: string; boxes: number; price: number; total: number; profit: number; adjustments: number; invoiceValue: number };
+type SalesReportGroup = { key: string; sales: Set<string>; boxes: number; total: number; profit: number; adjustments: number; invoiceValue: number; avgPrice: number };
 type ImportQuoteProduct = { product: string; weight: string; weightUnit: "KG" | "LBS"; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; marketPriceUsd: string };
 type ImportQuoteItem = ImportQuoteProduct & { products: ImportQuoteProduct[]; freightMxn: string; mexicoCostsMxn: string; mexicoCostsCurrency: Currency; usCostsUsd: string; usCostsCurrency: Currency; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; overweightCurrency: Currency; otherCostsUsd: string; otherCostsCurrency: Currency; exchangeRate: string };
 type ImportQuoteProductNumberField = "weight" | "pallets" | "boxes" | "boxesPerPallet" | "purchasePriceMxn" | "marketPriceUsd";
@@ -212,6 +214,28 @@ function adjustmentsFor(sale: Sale): InvoiceAdjustment[] {
   }
 }
 
+function saleReportKey(sale: Sale) {
+  return String(sale.id ?? `${sale.invoiceNumber || ""}-${sale.pickupNumber || ""}-${sale.saleDate}-${sale.customer}`);
+}
+
+function groupSalesReportLines(rows: SalesReportLine[], keyFor: (row: SalesReportLine) => string): SalesReportGroup[] {
+  const groups = new Map<string, SalesReportGroup>();
+  rows.forEach((row) => {
+    const key = keyFor(row) || "Sin asignar";
+    const current = groups.get(key) || { key, sales: new Set<string>(), boxes: 0, total: 0, profit: 0, adjustments: 0, invoiceValue: 0, avgPrice: 0 };
+    current.sales.add(saleReportKey(row.sale));
+    current.boxes += row.boxes;
+    current.total += row.total;
+    current.profit += row.profit;
+    current.adjustments += row.adjustments;
+    current.invoiceValue += row.invoiceValue;
+    groups.set(key, current);
+  });
+  return Array.from(groups.values())
+    .map((row) => ({ ...row, avgPrice: row.boxes ? row.total / row.boxes : 0 }))
+    .sort((a, b) => b.total - a.total);
+}
+
 const blankSale = {
   saleDate: localDateKey(), operationType: "DIRECT_RESALE" as Operation, supplier: "", inventoryLotId: "", customer: "", purchaseOrder: "", warehouse: "", pickupNumber: "",
   boxes: "", product: "", presentation: "", size: "", label: "", purchasePrice: "", salePrice: "", sellerName: "", shipDate: "", pickupDate: "",
@@ -242,6 +266,7 @@ const blankUser = { fullName: "", alias: "", email: "", password: "", currentPas
 const PERMISSION_OPTIONS = [
   ["sales_view", "Consultar ventas"], ["sales_edit", "Crear y modificar ventas"], ["inventory", "Inventario importado"], ["invoicing", "Facturación"], ["collections", "Cartera"], ["catalogs", "Clientes y proveedores"], ["reports", "Reportes"], ["administration", "Administración"], ["settings", "Configuración de empresa"], ["users", "Administrar usuarios"],
 ] as const;
+const ALL_PERMISSION_KEYS = PERMISSION_OPTIONS.map(([key]) => key);
 type Currency = "USD" | "MXN";
 type CostKey = "purchasePrice" | "freightCost" | "mexicoCustomsCost" | "usCustomsCost" | "overweightCost" | "redLightCost" | "redLightUsCost" | "coldStorageCost";
 const defaultCostCurrencies: Record<CostKey, Currency> = {
@@ -310,12 +335,15 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [adjustmentItems, setAdjustmentItems] = useState<AdjustmentLineItem[]>([]);
   const [adjustmentReason, setAdjustmentReason] = useState<InvoiceAdjustment["reason"]>("CAMBIO DE PRECIO");
   const [adjustmentNotes, setAdjustmentNotes] = useState("");
+  const [adjustmentInternalNotes, setAdjustmentInternalNotes] = useState("");
   const [adjustmentSaveState, setAdjustmentSaveState] = useState("");
   const [adjustmentPreview, setAdjustmentPreview] = useState<{ sale: Sale; adjustment: InvoiceAdjustment } | null>(null);
   const [socPreview, setSocPreview] = useState<Sale | null>(null);
   const [productDetailSale, setProductDetailSale] = useState<Sale | null>(null);
   const [productDetailItems, setProductDetailItems] = useState<InvoiceItem[]>([]);
   const [productDetailSaveState, setProductDetailSaveState] = useState("");
+  const [productDetailReadOnly, setProductDetailReadOnly] = useState(false);
+  const [importLoadDetail, setImportLoadDetail] = useState<{ loadReference: string; sales: Sale[] } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [expandedCatalogProducts, setExpandedCatalogProducts] = useState<string[]>([]);
   const [productModal, setProductModal] = useState(false);
@@ -354,6 +382,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [cancelParty, setCancelParty] = useState<"CLIENTE CANCELÓ" | "NW CANCELÓ">("CLIENTE CANCELÓ");
   const [cancelReason, setCancelReason] = useState("Sin Razón");
   const [cancelSaveState, setCancelSaveState] = useState("");
+  const [settingsAuthOpen, setSettingsAuthOpen] = useState(false);
+  const [settingsCredentials, setSettingsCredentials] = useState({ email: "", password: "" });
+  const [settingsAuthState, setSettingsAuthState] = useState("");
 
   useEffect(() => {
     fetch("/api/usa/sales").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
@@ -451,9 +482,28 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   }
 
   function openSettings() {
-    setSection("settings");
-    setCompanySaveState("");
-    void loadSettings();
+    setSettingsAuthOpen(true);
+    setSettingsAuthState("");
+    setSettingsCredentials({ email: "", password: "" });
+  }
+
+  async function authorizeSettings(event: FormEvent) {
+    event.preventDefault();
+    setSettingsAuthState("Verificando...");
+    try {
+      const response = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settingsCredentials) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No fue posible validar el usuario.");
+      const permissions = JSON.parse(data.user?.permissions || "[]") as string[];
+      const isAdmin = ALL_PERMISSION_KEYS.every((key) => permissions.includes(key));
+      if (!isAdmin) throw new Error("El usuario no es Administrador.");
+      setSettingsAuthOpen(false);
+      setSection("settings");
+      setCompanySaveState("");
+      void loadSettings();
+    } catch (error) {
+      setSettingsAuthState(error instanceof Error ? error.message : "No fue posible validar el usuario.");
+    }
   }
 
   function openReports() {
@@ -511,7 +561,8 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     }
     setUserSaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/users", { method: editingUserId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, id: editingUserId }) });
+      const payload = editingUserId && !userForm.newPassword && !userForm.confirmNewPassword ? { ...userForm, currentPassword: "", newPassword: "", confirmNewPassword: "", id: editingUserId } : { ...userForm, id: editingUserId };
+      const response = await fetch("/api/usa/users", { method: editingUserId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar el usuario.");
       setUsers((current) => (editingUserId ? current.map((item) => item.id === editingUserId ? data.user : item) : [...current, data.user]).sort((a, b) => a.fullName.localeCompare(b.fullName)));
@@ -1102,10 +1153,11 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setInvoiceItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
   }
 
-  function openProductDetail(sale: Sale) {
+  function openProductDetail(sale: Sale, readOnly = false) {
     setProductDetailSale(sale);
     setProductDetailItems(invoiceItemsFor(sale));
     setProductDetailSaveState("");
+    setProductDetailReadOnly(readOnly);
     void loadProducts();
   }
 
@@ -1113,6 +1165,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setProductDetailSale(null);
     setProductDetailItems([]);
     setProductDetailSaveState("");
+    setProductDetailReadOnly(false);
   }
 
   function updateProductDetailItem(index: number, changes: Partial<InvoiceItem>) {
@@ -1185,6 +1238,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setAdjustmentItems(invoiceItemsFor(sale).map((item) => ({ ...item, noAdjustment: false })));
     setAdjustmentReason("CAMBIO DE PRECIO");
     setAdjustmentNotes("");
+    setAdjustmentInternalNotes("");
     setAdjustmentSaveState("");
     void loadProducts();
   }
@@ -1193,6 +1247,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setAdjustmentSale(null);
     setAdjustmentItems([]);
     setAdjustmentNotes("");
+    setAdjustmentInternalNotes("");
     setAdjustmentSaveState("");
   }
 
@@ -1206,7 +1261,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     if (!adjustedItems.length) return setAdjustmentSaveState("No hay productos para ajustar.");
     setAdjustmentSaveState("Registrando ajuste…");
     try {
-      const response = await fetch("/api/usa/invoice-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleId: adjustmentSale.id, reason: adjustmentReason, notes: adjustmentNotes, items: adjustedItems }) });
+      const response = await fetch("/api/usa/invoice-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleId: adjustmentSale.id, reason: adjustmentReason, notes: adjustmentNotes, internalNotes: adjustmentInternalNotes, items: adjustedItems }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo registrar el ajuste.");
       replaceSale(data.sale);
@@ -1623,13 +1678,13 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   function productAlias(name: string) {
     return products.find((item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase())?.alias || name.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase();
   }
-  function productCell(sale: Sale) {
+  function productCell(sale: Sale, readOnly = false) {
     const items = invoiceItemsFor(sale);
     if (items.length <= 1) {
       const content = <><strong>{items[0]?.product || sale.product}</strong><small>{[items[0]?.presentation ?? sale.presentation, items[0]?.size ?? sale.size, items[0]?.label ?? sale.label].filter(Boolean).join(" · ") || "—"}</small></>;
-      return sale.invoiceNumber ? <button type="button" className="multi-product-button" onClick={() => openProductDetail(sale)}>{content}</button> : content;
+      return sale.invoiceNumber || readOnly ? <button type="button" className="multi-product-button" onClick={() => openProductDetail(sale, readOnly)}>{content}</button> : content;
     }
-    return <button type="button" className="multi-product-button" onClick={() => openProductDetail(sale)}><strong>{items.map((item) => productAlias(item.product)).join(" / ")}</strong><small>{items.length} productos · Ver detalle</small></button>;
+    return <button type="button" className="multi-product-button" onClick={() => openProductDetail(sale, readOnly)}><strong>{items.map((item) => productAlias(item.product)).join(" / ")}</strong><small>{items.length} productos · Ver detalle</small></button>;
   }
   function adjustmentChanges(adjustment: InvoiceAdjustment) {
     const changes: string[] = [];
@@ -1745,10 +1800,14 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   };
   const saleCostFor = (sale: Sale) => saleTotalFor(sale) - saleProfitFor(sale);
   const customerForSale = (sale: Sale) => partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === sale.customer);
+  const sellerProfitPoolFor = (sale: Sale) => {
+    const norwestPercentage = Math.min(100, Math.max(0, Number(companyForm.norwestProfitPercentage || 16)));
+    return Math.max(0, saleProfitFor(sale) * ((100 - norwestPercentage) / 100));
+  };
   const profitSellerName = (code: "RR" | "GM") => users.find((user) => user.alias.toLocaleUpperCase() === code || user.fullName.toLocaleUpperCase() === code)?.fullName || code;
   const sellerProfitAllocationsFor = (sale: Sale) => {
     const customer = customerForSale(sale);
-    const distributableProfit = Math.max(0, saleProfitFor(sale));
+    const distributableProfit = sellerProfitPoolFor(sale);
     const assignedSeller = sale.sellerName || customer?.assignedSeller || "Sin vendedor";
     const assignedPercentage = Math.min(100, Math.max(0, Number(customer?.profitPercentage || 0)));
     const rrGmPercentage = (100 - assignedPercentage) / 2;
@@ -1812,7 +1871,46 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     cost: saleCostFor(sale),
     profit: saleProfitFor(sale),
     sellerProfit: sellerProfitFor(sale),
-  })).sort((a, b) => b.sale.saleDate.localeCompare(a.sale.saleDate)), [reportSaleRows, partners, users]);
+  })).sort((a, b) => b.sale.saleDate.localeCompare(a.sale.saleDate)), [reportSaleRows, partners, users, companyForm.norwestProfitPercentage]);
+
+  const inventoryLotById = useMemo(() => new Map(inventory.map((lot) => [lot.id, lot])), [inventory]);
+  const importInvoiceForReportLine = (sale: Sale, item: InvoiceItem) => {
+    const lot = item.inventoryLotId ? inventoryLotById.get(Number(item.inventoryLotId)) : sale.inventoryLotId ? inventoryLotById.get(sale.inventoryLotId) : undefined;
+    if (lot?.pickupNumber) return lot.pickupNumber;
+    return sale.operationType === "IMPORTED_INVENTORY" ? sale.pickupNumber || "S/R" : "N/A";
+  };
+  const reportLineRows = useMemo<SalesReportLine[]>(() => reportSaleRows.flatMap((sale) => {
+    const items = invoiceItemsFor(sale);
+    const saleTotal = saleTotalFor(sale);
+    const adjustmentTotal = adjustmentsFor(sale).reduce((sum, adjustment) => sum + Number(adjustment.difference || 0), 0);
+    return items.map((item) => {
+      const boxes = Number(item.quantity || 0);
+      const price = Number(item.unitPrice || 0);
+      const total = boxes * price;
+      const purchasePrice = Number(item.purchasePrice ?? sale.purchasePrice ?? 0);
+      const profit = (price - purchasePrice) * boxes;
+      const adjustmentShare = saleTotal ? adjustmentTotal * (total / saleTotal) : items.length ? adjustmentTotal / items.length : 0;
+      return {
+        sale,
+        item,
+        customer: sale.customer,
+        seller: sale.sellerName || customerForSale(sale)?.assignedSeller || "Sin vendedor",
+        product: productAlias(item.product),
+        productDetail: invoiceItemDescription(item),
+        importInvoice: importInvoiceForReportLine(sale, item),
+        boxes,
+        price,
+        total,
+        profit,
+        adjustments: adjustmentShare,
+        invoiceValue: total + adjustmentShare,
+      };
+    });
+  }), [reportSaleRows, inventoryLotById, products, partners]);
+  const reportSalesByCustomerRows = useMemo(() => groupSalesReportLines(reportLineRows, (row) => row.customer), [reportLineRows]);
+  const reportSalesBySellerRows = useMemo(() => groupSalesReportLines(reportLineRows, (row) => row.seller), [reportLineRows]);
+  const reportSalesByProductRows = useMemo(() => groupSalesReportLines(reportLineRows, (row) => row.product), [reportLineRows]);
+  const reportSalesByImportInvoiceRows = useMemo(() => groupSalesReportLines(reportLineRows.filter((row) => row.importInvoice !== "N/A"), (row) => row.importInvoice), [reportLineRows]);
 
   const reportImportedLoadProfitRows = useMemo(() => {
     const lotsById = new Map(inventory.map((lot) => [lot.id, lot]));
@@ -1861,9 +1959,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       .map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length }))
       .filter((row) => row.saleCount || row.paid || row.sellerName !== "Sin vendedor")
       .sort((a, b) => b.sellerProfit - a.sellerProfit);
-  }, [reportSaleRows, partners, sellerLiquidations, users]);
+  }, [reportSaleRows, partners, sellerLiquidations, users, companyForm.norwestProfitPercentage]);
 
-  const sellerDetailSales = useMemo(() => sellerDetailName ? reportSaleRows.filter((sale) => sellerProfitAllocationsFor(sale).some((allocation) => allocation.sellerName === sellerDetailName && allocation.amount !== 0)) : [], [sellerDetailName, reportSaleRows, partners, users]);
+  const sellerDetailSales = useMemo(() => sellerDetailName ? reportSaleRows.filter((sale) => sellerProfitAllocationsFor(sale).some((allocation) => allocation.sellerName === sellerDetailName && allocation.amount !== 0)) : [], [sellerDetailName, reportSaleRows, partners, users, companyForm.norwestProfitPercentage]);
 
   const reportAdjustmentRows = useMemo(() => salesRows.flatMap((sale) => adjustmentsFor(sale).map((adjustment) => ({ sale, adjustment }))).filter(({ sale, adjustment }) => {
     const adjustmentDate = adjustment.createdAt.slice(0, 10);
@@ -1908,9 +2006,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       ensure(liquidation.sellerName).paid += Number(liquidation.amount || 0);
     });
     return Array.from(rows.values()).map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length })).sort((a, b) => b.balance - a.balance);
-  }, [salesRows, users, sellerLiquidations, partners]);
+  }, [salesRows, users, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
 
-  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), profitSellerName("RR"), profitSellerName("GM"), ...salesRows.flatMap((sale) => sellerProfitAllocationsFor(sale).map((allocation) => allocation.sellerName)), ...sellerLiquidations.map((item) => item.sellerName)])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations, partners]);
+  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), profitSellerName("RR"), profitSellerName("GM"), ...salesRows.flatMap((sale) => sellerProfitAllocationsFor(sale).map((allocation) => allocation.sellerName)), ...sellerLiquidations.map((item) => item.sellerName)])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
   const administrationTotals = useMemo(() => ({
     generated: administrationSellerRows.reduce((sum, row) => sum + row.sellerProfit, 0),
     paid: sellerLiquidations.reduce((sum, item) => sum + Number(item.amount || 0), 0),
@@ -2010,14 +2108,32 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     const profit = usesLineItems
       ? saleLineItems.reduce((sum, item) => sum + (Number(item.unitPrice || 0) - Number(item.purchasePrice || 0)) * Number(item.quantity || 0), 0)
       : (Number(form.salePrice || 0) - Number(form.purchasePrice || 0)) * Number(form.boxes || 0);
-    const sellerProfit = Math.max(0, profit);
+    const norwestPercentage = Math.min(100, Math.max(0, Number(companyForm.norwestProfitPercentage || 16)));
+    const sellerProfit = Math.max(0, profit * ((100 - norwestPercentage) / 100));
     return { total, profit, sellerProfit };
-  }, [form, saleLineItems]);
+  }, [form, saleLineItems, companyForm.norwestProfitPercentage]);
 
   const adjustmentOriginalItems = adjustmentSale ? invoiceItemsFor(adjustmentSale) : [];
   const adjustmentComputedItems = adjustedInvoiceItemsFromLines(adjustmentOriginalItems, adjustmentItems);
   const adjustmentOriginalTotal = adjustmentOriginalItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const adjustmentComputedTotal = adjustmentComputedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  const reportRecordCount = reportTab === "sales" ? reportSaleRows.length
+    : reportTab === "inventory" ? reportInventoryRows.length
+      : reportTab === "collections" ? reportCollectionRows.length
+        : reportTab === "profit" ? reportProfitRows.length
+          : reportTab === "importProfit" ? reportImportedLoadProfitRows.length
+            : reportTab === "sellerProfit" ? reportSellerProfitRows.length
+              : reportTab === "salesByCustomer" ? reportSalesByCustomerRows.length
+                : reportTab === "salesDetailCustomer" ? reportLineRows.length
+                  : reportTab === "salesBySeller" ? reportSalesBySellerRows.length
+                    : reportTab === "salesDetailSeller" ? reportLineRows.length
+                      : reportTab === "salesByProduct" ? reportSalesByProductRows.length
+                        : reportTab === "salesDetailProduct" ? reportLineRows.length
+                          : reportTab === "salesByImportInvoice" ? reportSalesByImportInvoiceRows.length
+                            : reportTab === "salesDetailImportInvoice" ? reportLineRows.filter((row) => row.importInvoice !== "N/A").length
+                              : reportAdjustmentRows.length;
+  const renderSalesSummaryReport = (rows: SalesReportGroup[], label: string) => <div className="table-wrap report-table"><table><thead><tr><th>{label}</th><th className="numeric">Ventas</th><th className="numeric">Cajas</th><th className="numeric">Precio prom.</th><th className="numeric">Venta total</th><th className="numeric">Ajustes</th><th className="numeric">Valor factura</th><th className="numeric">Utilidad</th></tr></thead><tbody>{rows.map((row) => <tr key={row.key}><td><strong>{row.key}</strong></td><td className="numeric">{number.format(row.sales.size)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric">{money.format(row.avgPrice)}</td><td className="numeric strong-number">{money.format(row.total)}</td><td className={`numeric ${row.adjustments < 0 ? "negative-number" : ""}`}>{money.format(row.adjustments)}</td><td className="numeric strong-number">{money.format(row.invoiceValue)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td></tr>)}</tbody></table></div>;
+  const renderSalesDetailReport = (rows: SalesReportLine[], label: string, valueFor: (row: SalesReportLine) => string) => <div className="table-wrap report-table"><table><thead><tr><th>{label}</th><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Vendedor</th><th>Pickup #</th><th>Producto</th><th>Factura importación</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Ajuste</th><th className="numeric">Valor factura</th><th className="numeric">Utilidad</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${saleReportKey(row.sale)}-${row.productDetail}-${index}`}><td><strong>{valueFor(row)}</strong></td><td>{formatDate(row.sale.saleDate)}</td><td>{row.sale.invoiceNumber || "Pendiente"}</td><td>{row.customer}</td><td>{row.seller}</td><td>{row.sale.pickupNumber || "N/A"}</td><td><strong>{row.product}</strong><small>{row.productDetail}</small></td><td>{row.importInvoice}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric">{money.format(row.price)}</td><td className={`numeric ${row.adjustments < 0 ? "negative-number" : ""}`}>{money.format(row.adjustments)}</td><td className="numeric strong-number">{money.format(row.invoiceValue)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td></tr>)}</tbody></table></div>;
 
   async function saveSale(event: FormEvent) {
     event.preventDefault();
@@ -2299,7 +2415,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Cartera</p><strong>{money.format(reportSummary.receivable)}</strong><span>Saldo pendiente en facturas filtradas</span></article>
         </section>
         <section className="sales-panel reports-panel">
-          <div className="panel-heading"><div><h2>Centro de reportes USA</h2><p>Consulta ventas, inventario, cartera, utilidad y ajustes sin modificar la operacion.</p></div><span className="record-count">{reportTab === "sales" ? reportSaleRows.length : reportTab === "inventory" ? reportInventoryRows.length : reportTab === "collections" ? reportCollectionRows.length : reportTab === "profit" ? reportProfitRows.length : reportTab === "importProfit" ? reportImportedLoadProfitRows.length : reportTab === "sellerProfit" ? reportSellerProfitRows.length : reportAdjustmentRows.length} registros</span></div>
+          <div className="panel-heading"><div><h2>Centro de reportes USA</h2><p>Consulta ventas, inventario, cartera, utilidad y ajustes sin modificar la operacion.</p></div><span className="record-count">{reportRecordCount} registros</span></div>
           <div className="filters report-filters">
             <label className="search-box"><span>⌕</span><input value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar cliente, factura, pickup, PO, producto o proveedor" /></label>
             <label className="report-date-field"><span>Desde</span><input type="date" value={reportFromDate} onChange={(event) => setReportFromDate(event.target.value)} /></label>
@@ -2311,9 +2427,17 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
               ["sales", "Ventas"],
               ["inventory", "Inventario"],
               ["collections", "Cartera"],
-              ["profit", "Utilidad por Carga"],
+              ["profit", "Utilidad por Venta"],
               ["importProfit", "Utilidad por Carga importada"],
               ["sellerProfit", "Utilidad por Vendedor"],
+              ["salesByCustomer", "Ventas por Cliente"],
+              ["salesDetailCustomer", "Detalle por Cliente"],
+              ["salesBySeller", "Ventas por Vendedor"],
+              ["salesDetailSeller", "Detalle por Vendedor"],
+              ["salesByProduct", "Ventas por Producto"],
+              ["salesDetailProduct", "Detalle por Producto"],
+              ["salesByImportInvoice", "Ventas por Factura Import."],
+              ["salesDetailImportInvoice", "Detalle Factura Import."],
               ["adjustments", "Ajustes"],
             ] as Array<[ReportTab, string]>).map(([value, label]) => <button type="button" key={value} className={reportTab === value ? "active" : ""} onClick={() => setReportTab(value)}>{label}</button>)}
           </div>
@@ -2326,13 +2450,22 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
           {reportTab === "profit" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{reportProfitRows.map((row, index) => <tr key={row.sale.id ?? `${row.sale.pickupNumber}-${index}`}><td>{formatDate(row.sale.saleDate)}</td><td>{row.sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(row.sale)}><span className="invoice-chip invoice-ok">OK</span><small>{row.sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td><td><strong>{row.sale.customer}</strong><small>{row.sale.sellerName || "Sin vendedor"}</small></td><td>{row.sale.pickupNumber || "N/A"}</td><td>{productCell(row.sale)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.sales)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.boxes ? row.profit / row.boxes : 0)}</td><td className="numeric">{money.format(row.sellerProfit)}</td></tr>)}</tbody></table></div>}
 
-          {reportTab === "importProfit" && <div className="table-wrap report-table"><table><thead><tr><th>Factura carga</th><th>Proveedor</th><th>Bodega</th><th>Productos</th><th className="numeric">Ventas</th><th className="numeric">Cajas vendidas</th><th className="numeric">Venta total</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th></tr></thead><tbody>{reportImportedLoadProfitRows.map((row) => <tr key={row.key}><td><strong>{row.loadReference}</strong><small>{row.sales.map((sale) => sale.invoiceNumber || sale.pickupNumber).filter(Boolean).join(" / ") || "Sin facturas"}</small></td><td>{row.supplier}</td><td>{row.warehouse}</td><td>{row.productLabel || "N/A"}</td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profitPerBox < 0 ? "negative-number" : ""}`}>{money.format(row.profitPerBox)}</td></tr>)}</tbody></table></div>}
+          {reportTab === "importProfit" && <div className="table-wrap report-table"><table><thead><tr><th>Factura carga</th><th>Proveedor</th><th>Bodega</th><th>Productos</th><th className="numeric">Ventas</th><th className="numeric">Cajas vendidas</th><th className="numeric">Venta total</th><th className="numeric">Costo</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th></tr></thead><tbody>{reportImportedLoadProfitRows.map((row) => <tr key={row.key}><td><button type="button" className="invoice-number-button" onClick={() => setImportLoadDetail({ loadReference: row.loadReference, sales: row.sales })}><strong>{row.loadReference}</strong><small>{row.sales.map((sale) => sale.invoiceNumber || sale.pickupNumber).filter(Boolean).join(" / ") || "Sin facturas"}</small></button></td><td>{row.supplier}</td><td>{row.warehouse}</td><td>{row.productLabel || "N/A"}</td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className="numeric">{money.format(row.cost)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profitPerBox < 0 ? "negative-number" : ""}`}>{money.format(row.profitPerBox)}</td></tr>)}</tbody></table></div>}
 
-          {reportTab === "sellerProfit" && <><div className="table-wrap report-table"><table><thead><tr><th>Vendedor</th><th className="numeric">Ventas</th><th className="numeric">Cajas</th><th className="numeric">Venta total</th><th className="numeric">Utilidad total</th><th className="numeric">Utilidad vendedor</th><th className="numeric">Liquidado</th><th className="numeric">Saldo</th></tr></thead><tbody>{reportSellerProfitRows.map((row) => <tr key={row.sellerName}><td><strong>{row.sellerName}</strong></td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className="numeric"><button type="button" className="report-money-button" onClick={() => setSellerDetailName(sellerDetailName === row.sellerName ? null : row.sellerName)}>{money.format(row.sellerProfit)}</button></td><td className="numeric">{money.format(row.paid)}</td><td className={`numeric strong-number ${row.balance < 0 ? "negative-number" : ""}`}>{money.format(row.balance)}</td></tr>)}</tbody></table></div>{sellerDetailName && <section className="seller-detail-panel"><div className="panel-heading"><div><h2>Detalle de utilidad de {sellerDetailName}</h2><p>Ventas que integran el monto acumulado del vendedor.</p></div><button type="button" className="secondary-button" onClick={() => setSellerDetailName(null)}>Cerrar detalle</button></div><div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedor</th></tr></thead><tbody>{sellerDetailSales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td>{sale.customer}</td><td>{sale.pickupNumber}</td><td>{productCell(sale)}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric strong-number">{money.format(sellerProfitFor(sale, sellerDetailName))}</td></tr>)}</tbody></table></div></section>}</>}
+          {reportTab === "sellerProfit" && <><div className="table-wrap report-table"><table><thead><tr><th>Vendedor</th><th className="numeric">Ventas</th><th className="numeric">Cajas</th><th className="numeric">Venta total</th><th className="numeric">Utilidad total</th><th className="numeric">Utilidad vendedor</th><th className="numeric">Liquidado</th><th className="numeric">Saldo</th></tr></thead><tbody>{reportSellerProfitRows.map((row) => <tr key={row.sellerName}><td><strong>{row.sellerName}</strong></td><td className="numeric">{number.format(row.saleCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.saleTotal)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className="numeric"><button type="button" className="report-money-button" onClick={() => setSellerDetailName(sellerDetailName === row.sellerName ? null : row.sellerName)}>{money.format(row.sellerProfit)}</button></td><td className="numeric">{money.format(row.paid)}</td><td className={`numeric strong-number ${row.balance < 0 ? "negative-number" : ""}`}>{money.format(row.balance)}</td></tr>)}</tbody></table></div>{sellerDetailName && <section className="seller-detail-panel"><div className="panel-heading"><div><h2>Detalle de utilidad de {sellerDetailName}</h2><p>Ventas que integran el monto acumulado del vendedor.</p></div><button type="button" className="secondary-button" onClick={() => setSellerDetailName(null)}>Cerrar detalle</button></div><div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Pickup #</th><th>Producto</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedor</th></tr></thead><tbody>{sellerDetailSales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td>{sale.customer}</td><td>{sale.pickupNumber}</td><td>{productCell(sale, true)}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric strong-number">{money.format(sellerProfitFor(sale, sellerDetailName))}</td></tr>)}</tbody></table></div></section>}</>}
+
+          {reportTab === "salesByCustomer" && renderSalesSummaryReport(reportSalesByCustomerRows, "Cliente")}
+          {reportTab === "salesDetailCustomer" && renderSalesDetailReport(reportLineRows, "Cliente", (row) => row.customer)}
+          {reportTab === "salesBySeller" && renderSalesSummaryReport(reportSalesBySellerRows, "Vendedor")}
+          {reportTab === "salesDetailSeller" && renderSalesDetailReport(reportLineRows, "Vendedor", (row) => row.seller)}
+          {reportTab === "salesByProduct" && renderSalesSummaryReport(reportSalesByProductRows, "Producto")}
+          {reportTab === "salesDetailProduct" && renderSalesDetailReport(reportLineRows, "Producto", (row) => row.product)}
+          {reportTab === "salesByImportInvoice" && renderSalesSummaryReport(reportSalesByImportInvoiceRows, "Factura de importación")}
+          {reportTab === "salesDetailImportInvoice" && renderSalesDetailReport(reportLineRows.filter((row) => row.importInvoice !== "N/A"), "Factura de importación", (row) => row.importInvoice)}
 
           {reportTab === "adjustments" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Ajuste</th><th>Factura</th><th>Cliente</th><th>Motivo</th><th>Tipo</th><th className="numeric">Diferencia</th><th>Notas</th><th></th></tr></thead><tbody>{reportAdjustmentRows.map(({ sale, adjustment }) => <tr key={`${sale.id}-${adjustment.number}`}><td>{formatDate(adjustment.createdAt.slice(0, 10))}</td><td><strong>{adjustment.number}</strong></td><td>{sale.invoiceNumber || "N/A"}</td><td>{sale.customer}</td><td>{adjustment.reason}</td><td>{adjustment.documentType}</td><td className={`numeric strong-number ${adjustment.difference < 0 ? "negative-number" : ""}`}>{money.format(adjustment.difference)}</td><td>{adjustment.notes || "Sin notas"}</td><td><button type="button" className="edit-button" onClick={() => setAdjustmentPreview({ sale, adjustment })}>Ver ajuste</button></td></tr>)}</tbody></table></div>}
 
-          {((reportTab === "sales" && reportSaleRows.length === 0) || (reportTab === "inventory" && reportInventoryRows.length === 0) || (reportTab === "collections" && reportCollectionRows.length === 0) || (reportTab === "profit" && reportProfitRows.length === 0) || (reportTab === "importProfit" && reportImportedLoadProfitRows.length === 0) || (reportTab === "sellerProfit" && reportSellerProfitRows.length === 0) || (reportTab === "adjustments" && reportAdjustmentRows.length === 0)) && <div className="catalog-empty"><strong>No hay informacion para mostrar</strong><span>Ajusta la busqueda o el rango de fechas para consultar otros registros.</span></div>}
+          {reportRecordCount === 0 && <div className="catalog-empty"><strong>No hay informacion para mostrar</strong><span>Ajusta la busqueda o el rango de fechas para consultar otros registros.</span></div>}
         </section>
       </section>}
 
@@ -2491,10 +2624,16 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         {productSaveState && <p className="form-message">{productSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setProductModal(false); setProductTarget(null); setProductTargetLine(null); setProductVariantBase(null); }}>Cancelar</button><button type="submit" className="primary-button">{productVariantBase ? "Guardar variante" : "Registrar producto"}</button></div>
       </form></div>}
 
+      {settingsAuthOpen && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal admin-auth-modal" onSubmit={authorizeSettings}>
+        <div className="modal-heading"><div><p className="eyebrow">Autorización requerida</p><h2>Configuración USA</h2><p className="modal-intro">Ingresa con un usuario Administrador para modificar empresa, usuarios y permisos.</p></div></div>
+        <section className="form-section"><div className="form-grid"><label>Correo administrador<input required type="email" value={settingsCredentials.email} onChange={(event) => setSettingsCredentials((current) => ({ ...current, email: event.target.value }))} /></label><label>Contraseña<input required type="password" value={settingsCredentials.password} onChange={(event) => setSettingsCredentials((current) => ({ ...current, password: event.target.value }))} /></label></div></section>
+        {settingsAuthState && <p className="form-message">{settingsAuthState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setSettingsAuthOpen(false)}>Cancelar</button><button type="submit" className="primary-button">Entrar</button></div>
+      </form></div>}
+
       {userModal && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal user-modal" onSubmit={saveUser}>
         <div className="modal-heading"><div><p className="eyebrow">Configuración USA</p><h2>{editingUserId ? "Editar usuario" : "Agregar usuario"}</h2><p className="modal-intro">Define sus datos y lo que podrá consultar o modificar.</p></div></div>
-        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label>{editingUserId ? <><label>Contraseña actual<div className="password-input"><input minLength={8} type={visibleUserPasswords.current ? "text" : "password"} autoComplete="current-password" value={userForm.currentPassword} onChange={(e) => setUserForm({...userForm, currentPassword:e.target.value})} placeholder="Necesaria para cambiarla" /><button type="button" className={visibleUserPasswords.current ? "is-visible" : ""} aria-label={visibleUserPasswords.current ? "Ocultar contraseña actual" : "Mostrar contraseña actual"} aria-pressed={visibleUserPasswords.current} onClick={() => setVisibleUserPasswords((current) => ({...current, current:!current.current}))}>👁</button></div></label><label>Nueva contraseña<div className="password-input"><input minLength={8} type={visibleUserPasswords.next ? "text" : "password"} autoComplete="new-password" value={userForm.newPassword} onChange={(e) => setUserForm({...userForm, newPassword:e.target.value})} placeholder="Mínimo 8 caracteres" /><button type="button" className={visibleUserPasswords.next ? "is-visible" : ""} aria-label={visibleUserPasswords.next ? "Ocultar nueva contraseña" : "Mostrar nueva contraseña"} aria-pressed={visibleUserPasswords.next} onClick={() => setVisibleUserPasswords((current) => ({...current, next:!current.next}))}>👁</button></div></label><label>Confirmar nueva contraseña<div className="password-input"><input minLength={8} type={visibleUserPasswords.confirm ? "text" : "password"} autoComplete="new-password" value={userForm.confirmNewPassword} onChange={(e) => setUserForm({...userForm, confirmNewPassword:e.target.value})} placeholder="Repite la nueva contraseña" /><button type="button" className={visibleUserPasswords.confirm ? "is-visible" : ""} aria-label={visibleUserPasswords.confirm ? "Ocultar confirmación" : "Mostrar confirmación"} aria-pressed={visibleUserPasswords.confirm} onClick={() => setVisibleUserPasswords((current) => ({...current, confirm:!current.confirm}))}>👁</button></div></label></> : <label>Contraseña *<div className="password-input"><input required minLength={8} type={visibleUserPasswords.password ? "text" : "password"} autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder="Mínimo 8 caracteres" /><button type="button" className={visibleUserPasswords.password ? "is-visible" : ""} aria-label={visibleUserPasswords.password ? "Ocultar contraseña" : "Mostrar contraseña"} aria-pressed={visibleUserPasswords.password} onClick={() => setVisibleUserPasswords((current) => ({...current, password:!current.password}))}>👁</button></div></label>}<label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div>{editingUserId && <p className="password-change-help">Para conservar la contraseña actual, deja vacíos los tres campos de contraseña.</p>}</section>
-        <section className="form-section"><div className="form-section-heading"><span>✓</span><div><h3>Permisos del usuario</h3><p>Autoriza individualmente cada área.</p></div></div><div className="permissions-grid">{PERMISSION_OPTIONS.map(([key, label]) => <label key={key}><input type="checkbox" checked={userForm.permissions.includes(key)} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...userForm.permissions, key] : userForm.permissions.filter((item) => item !== key)})} /><span>{label}</span></label>)}</div></section>
+        <section className="form-section"><div className="form-grid"><label>Nombre completo *<input required value={userForm.fullName} onChange={(e) => setUserForm({...userForm, fullName:e.target.value})} /></label><label>Alias *<input required value={userForm.alias} onChange={(e) => setUserForm({...userForm, alias:e.target.value})} /></label><label>Correo *<input required type="email" value={userForm.email} onChange={(e) => setUserForm({...userForm, email:e.target.value})} /></label>{editingUserId ? <><label hidden>Contraseña actual<div className="password-input"><input minLength={8} type={visibleUserPasswords.current ? "text" : "password"} autoComplete="current-password" value={userForm.currentPassword} onChange={(e) => setUserForm({...userForm, currentPassword:e.target.value})} placeholder="No requerida" /><button type="button" className={visibleUserPasswords.current ? "is-visible" : ""} aria-label={visibleUserPasswords.current ? "Ocultar contraseña actual" : "Mostrar contraseña actual"} aria-pressed={visibleUserPasswords.current} onClick={() => setVisibleUserPasswords((current) => ({...current, current:!current.current}))}>👁</button></div></label><label>Nueva contraseña<div className="password-input"><input minLength={8} type={visibleUserPasswords.next ? "text" : "password"} autoComplete="new-password" value={userForm.newPassword} onChange={(e) => setUserForm({...userForm, newPassword:e.target.value})} placeholder="Mínimo 8 caracteres" /><button type="button" className={visibleUserPasswords.next ? "is-visible" : ""} aria-label={visibleUserPasswords.next ? "Ocultar nueva contraseña" : "Mostrar nueva contraseña"} aria-pressed={visibleUserPasswords.next} onClick={() => setVisibleUserPasswords((current) => ({...current, next:!current.next}))}>👁</button></div></label><label>Confirmar nueva contraseña<div className="password-input"><input minLength={8} type={visibleUserPasswords.confirm ? "text" : "password"} autoComplete="new-password" value={userForm.confirmNewPassword} onChange={(e) => setUserForm({...userForm, confirmNewPassword:e.target.value})} placeholder="Repite la nueva contraseña" /><button type="button" className={visibleUserPasswords.confirm ? "is-visible" : ""} aria-label={visibleUserPasswords.confirm ? "Ocultar confirmación" : "Mostrar confirmación"} aria-pressed={visibleUserPasswords.confirm} onClick={() => setVisibleUserPasswords((current) => ({...current, confirm:!current.confirm}))}>👁</button></div></label></> : <label>Contraseña *<div className="password-input"><input required minLength={8} type={visibleUserPasswords.password ? "text" : "password"} autoComplete="new-password" value={userForm.password} onChange={(e) => setUserForm({...userForm, password:e.target.value})} placeholder="Mínimo 8 caracteres" /><button type="button" className={visibleUserPasswords.password ? "is-visible" : ""} aria-label={visibleUserPasswords.password ? "Ocultar contraseña" : "Mostrar contraseña"} aria-pressed={visibleUserPasswords.password} onClick={() => setVisibleUserPasswords((current) => ({...current, password:!current.password}))}>👁</button></div></label>}<label className="user-active-check"><input type="checkbox" checked={userForm.active} onChange={(e) => setUserForm({...userForm, active:e.target.checked})} /> Usuario activo</label></div>{editingUserId && <p className="password-change-help">Para conservar la contraseña actual, deja vacíos nueva contraseña y confirmación.</p>}</section>
+        <section className="form-section"><div className="form-section-heading"><span>✓</span><div><h3>Permisos del usuario</h3><p>Autoriza individualmente cada área.</p></div></div><label className="dual-role-check admin-check"><input type="checkbox" checked={ALL_PERMISSION_KEYS.every((key) => userForm.permissions.includes(key))} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...ALL_PERMISSION_KEYS] : ["sales_view"]})} /><span><strong>Es Administrador</strong><small>Al activar esta casilla obtiene todos los permisos en automatico.</small></span></label><div className="permissions-grid">{PERMISSION_OPTIONS.map(([key, label]) => <label key={key}><input type="checkbox" checked={userForm.permissions.includes(key)} onChange={(e) => setUserForm({...userForm, permissions:e.target.checked ? [...userForm.permissions, key] : userForm.permissions.filter((item) => item !== key)})} /><span>{label}</span></label>)}</div></section>
         {userSaveState && <p className="form-message">{userSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(false)}>Cancelar</button><button type="submit" className="primary-button">{editingUserId ? "Guardar cambios" : "Crear usuario"}</button></div>
       </form></div>}
 
@@ -2511,14 +2650,20 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         {statusSaveState && <p className="form-message">{statusSaveState}</p>}<div className="modal-actions status-modal-actions"><button type="button" className="secondary-button" onClick={closeStatusModal}>Cancelar</button><button type="button" className="secondary-button" onClick={() => void saveUsdaStatus(true)}>Aún no la tengo</button><button type="button" className="primary-button" disabled={!usdaFile} onClick={() => void saveUsdaStatus(false)}>Guardar inspección</button></div>
       </section></div>}
 
+      {importLoadDetail && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal sale-modal-wide">
+        <div className="modal-heading"><div><p className="eyebrow">Utilidad por carga importada</p><h2>Factura de carga {importLoadDetail.loadReference}</h2><p className="modal-intro">Detalle de ventas generadas desde esta carga.</p></div></div>
+        <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura venta</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{importLoadDetail.sales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td><strong>{sale.customer}</strong><small>{sale.sellerName || "Sin vendedor"}</small></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale, true)}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric strong-number ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric">{money.format(sellerProfitFor(sale))}</td></tr>)}</tbody></table></div>
+        <div className="modal-actions"><button type="button" className="primary-button" onClick={() => setImportLoadDetail(null)}>Ok</button></div>
+      </section></div>}
+
       {productDetailSale && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal product-detail-modal">
         <div className="modal-heading"><div><p className="eyebrow">Detalle de la carga</p><h2>Productos · Pickup #{productDetailSale.pickupNumber}</h2><p className="modal-intro">{productDetailSale.customer}</p></div></div>
         {productDetailSale.canceledAt && <div className="canceled-record-notice"><strong>Venta cancelada</strong><span>{productDetailSale.canceledBy} · {productDetailSale.cancellationReason}</span></div>}
-        {productDetailSale.invoiceNumber && <div className="locked-detail-notice"><strong>Factura emitida · sólo consulta</strong><span>Para cambiar productos, bultos/cajas o precios, utiliza Crear ajuste desde la vista de la factura.</span></div>}
-        <div className="product-detail-list">{productDetailItems.map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><div className="product-detail-edit"><label><span>Bultos / cajas</span><input disabled={Boolean(productDetailSale.canceledAt || productDetailSale.invoiceNumber)} min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateProductDetailItem(index, { quantity: Number(event.target.value) })} /></label><label><span>Precio</span>{moneyField(item.unitPrice, (value) => updateProductDetailItem(index, { unitPrice: Number(value) }), false, Boolean(productDetailSale.canceledAt || productDetailSale.invoiceNumber))}</label><div><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div></div></article>)}</div>
+        {(productDetailSale.invoiceNumber || productDetailReadOnly) && <div className="locked-detail-notice"><strong>Detalle sólo consulta</strong><span>{productDetailReadOnly ? "Esta vista viene desde Reportes y no permite modificar información." : "Para cambiar productos, bultos/cajas o precios, utiliza Crear ajuste desde la vista de la factura."}</span></div>}
+        <div className="product-detail-list">{productDetailItems.map((item, index) => <article key={`${item.product}-${index}`}><span className="product-alias-chip">{productAlias(item.product)}</span><div><strong>{item.product}</strong><small>{[item.presentation, item.size, item.label].filter(Boolean).join(" · ") || "Sin presentación especificada"}</small></div><div className="product-detail-edit"><label><span>Bultos / cajas</span><input disabled={Boolean(productDetailReadOnly || productDetailSale.canceledAt || productDetailSale.invoiceNumber)} min="1" step="1" type="number" value={item.quantity} onChange={(event) => updateProductDetailItem(index, { quantity: Number(event.target.value) })} /></label><label><span>Precio</span>{moneyField(item.unitPrice, (value) => updateProductDetailItem(index, { unitPrice: Number(value) }), false, Boolean(productDetailReadOnly || productDetailSale.canceledAt || productDetailSale.invoiceNumber))}</label><div><span>Total</span><strong>{money.format(item.quantity * item.unitPrice)}</strong></div></div></article>)}</div>
         <div className="product-detail-summary"><span>Total de bultos/cajas: <strong>{number.format(productDetailItems.reduce((sum, item) => sum + item.quantity, 0))}</strong></span><span>Total de la carga: <strong>{money.format(productDetailItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></span></div>
         {productDetailSaveState && <p className="form-message">{productDetailSaveState}</p>}
-        <div className="modal-actions"><button type="button" className="secondary-button" onClick={closeProductDetail}>{productDetailSale.canceledAt || productDetailSale.invoiceNumber ? "Cerrar" : "Cancelar"}</button>{!productDetailSale.canceledAt && !productDetailSale.invoiceNumber && <button type="button" className="primary-button" onClick={() => void saveProductDetail()}>Guardar cambios</button>}</div>
+        <div className="modal-actions">{productDetailReadOnly ? <button type="button" className="primary-button" onClick={closeProductDetail}>Ok</button> : <><button type="button" className="secondary-button" onClick={closeProductDetail}>{productDetailSale.canceledAt || productDetailSale.invoiceNumber ? "Cerrar" : "Cancelar"}</button>{!productDetailSale.canceledAt && !productDetailSale.invoiceNumber && <button type="button" className="primary-button" onClick={() => void saveProductDetail()}>Guardar cambios</button>}</>}</div>
       </section></div>}
 
       {cancelSale && <div className="modal-backdrop modal-backdrop-elevated"><form className="sale-modal cancellation-modal" onSubmit={confirmCancelSale}>
@@ -2532,7 +2677,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
       {adjustmentSale && <div className="modal-backdrop adjustment-modal-backdrop"><form className="sale-modal sale-modal-wide adjustment-modal" onSubmit={saveInvoiceAdjustment}>
         <div className="modal-heading"><div><p className="eyebrow">Ajuste posterior a facturación</p><h2>Factura {adjustmentSale.invoiceNumber}</h2><p className="modal-intro">La factura original permanecerá intacta. El sistema generará una nota ligada a ella por la diferencia.</p></div></div>
-        <section className="form-section adjustment-reason-section"><div className="form-grid"><label>Motivo<select value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value as InvoiceAdjustment["reason"])}><option>CAMBIO DE PRECIO</option><option>CALIDAD</option><option>RECHAZO PARCIAL</option><option>PRODUCTO ELIMINADO</option><option>CARGA POR ERROR</option><option>OTRO</option></select></label><label className="span-2">Descripción del ajuste<input required value={adjustmentNotes} onChange={(event) => setAdjustmentNotes(event.target.value)} placeholder="Ej. Rechazo parcial por calidad; se acreditan 25 cajas" /></label></div></section>
+        <section className="form-section adjustment-reason-section"><div className="form-grid"><label>Motivo<select value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value as InvoiceAdjustment["reason"])}><option>CAMBIO DE PRECIO</option><option>CALIDAD</option><option>RECHAZO PARCIAL</option><option>PRODUCTO ELIMINADO</option><option>CARGA POR ERROR</option><option>OTRO</option></select></label><label className="span-2">Descripción del ajuste<input required value={adjustmentNotes} onChange={(event) => setAdjustmentNotes(event.target.value)} placeholder="Ej. Rechazo parcial por calidad; se acreditan 25 cajas. ESTE TEXTO APARECERÁ EN LA FACTURA AJUSTADA" /></label><label className="span-3">Descripción Detallada para NORWEST PRODUCE<textarea value={adjustmentInternalNotes} onChange={(event) => setAdjustmentInternalNotes(event.target.value)} placeholder="Notas internas de seguimiento. No aparecen en la factura ajustada." /></label></div></section>
         <div className="adjustment-items">{adjustmentItems.map((item, index) => { const original = adjustmentOriginalItems[index] || item; const remaining = Math.max(0, Number(original.quantity || 0) - Number(item.quantity || 0)); return <article key={`${item.product}-${index}`}><label><span>Producto</span><input readOnly value={invoiceItemDescription(original)} /></label><label><span>Bultos/Cajas a Ajustar</span><input disabled={Boolean(item.noAdjustment)} min="1" max={original.quantity} step="1" type="number" value={item.quantity} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, quantity: Number(event.target.value) } : row))} /></label><label><span>Precio</span>{moneyField(item.unitPrice, (value) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unitPrice: Number(value) } : row)), false, Boolean(item.noAdjustment))}</label><strong>{item.noAdjustment ? money.format(original.quantity * original.unitPrice) : <><span>{money.format(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</span>{remaining > 0 && <small>{number.format(remaining)} cajas quedan a {money.format(original.unitPrice)}</small>}</>}</strong><label className="adjustment-no-change"><input type="checkbox" checked={Boolean(item.noAdjustment)} onChange={(event) => setAdjustmentItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, noAdjustment: event.target.checked } : row))} /><span>Sin ajuste</span></label></article>; })}</div>
         <div className="adjustment-summary"><span>Total vigente <strong>{money.format(adjustmentOriginalTotal)}</strong></span><span>Nuevo total <strong>{money.format(adjustmentComputedTotal)}</strong></span><span>Diferencia <strong>{money.format(adjustmentComputedTotal - adjustmentOriginalTotal)}</strong></span></div>
         {adjustmentSaveState && <p className="form-message">{adjustmentSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={closeInvoiceAdjustment}>Cancelar</button><button type="submit" className="primary-button">Generar ajuste</button></div>
@@ -2552,7 +2697,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
       {invoicePreview && !adjustmentPreview && <div className="modal-backdrop invoice-preview-backdrop"><section className="sale-modal invoice-preview-modal">
         <div className="invoice-toolbar"><div><p className="eyebrow">Vista previa</p><h2>Factura {invoicePreview.invoiceNumber}</h2></div><div><button type="button" className="secondary-button" onClick={() => openInvoiceAdjustment(invoicePreview)}>Crear ajuste</button><button type="button" className="secondary-button" onClick={() => setInvoicePreview(null)}>Cerrar</button><button type="button" className="primary-button" onClick={() => window.print()}>Imprimir PDF</button></div></div>
-        {invoicePreview.canceledAt && <div className="canceled-record-notice"><strong>Venta cancelada</strong><span>{invoicePreview.canceledBy} · {invoicePreview.cancellationReason}</span></div>}{adjustmentsFor(invoicePreview).length > 0 && <div className="invoice-adjustment-history"><strong>Ajustes registrados</strong>{adjustmentsFor(invoicePreview).map((adjustment) => <article key={adjustment.number}><div><b>{adjustment.number}</b><span>{new Date(adjustment.createdAt).toLocaleString("es-MX")} · {adjustment.documentType}</span></div><p><strong>{adjustment.reason}</strong> · {adjustment.notes}</p><ul>{adjustmentChanges(adjustment).map((change) => <li key={change}>{change}</li>)}</ul><button type="button" onClick={() => setAdjustmentPreview({ sale: invoicePreview, adjustment })}>Ver / imprimir ajuste</button></article>)}</div>}
+        {invoicePreview.canceledAt && <div className="canceled-record-notice"><strong>Venta cancelada</strong><span>{invoicePreview.canceledBy} · {invoicePreview.cancellationReason}</span></div>}{adjustmentsFor(invoicePreview).length > 0 && <div className="invoice-adjustment-history"><strong>Ajustes registrados</strong>{adjustmentsFor(invoicePreview).map((adjustment) => <article key={adjustment.number}><div><b>{adjustment.number}</b><span>{new Date(adjustment.createdAt).toLocaleString("es-MX")} · {adjustment.documentType}</span></div><p><strong>{adjustment.reason}</strong> · {adjustment.notes}</p>{adjustment.internalNotes && <p><strong>Interno Norwest:</strong> {adjustment.internalNotes}</p>}<ul>{adjustmentChanges(adjustment).map((change) => <li key={change}>{change}</li>)}</ul><button type="button" onClick={() => setAdjustmentPreview({ sale: invoicePreview, adjustment })}>Ver / imprimir ajuste</button></article>)}</div>}
         <article className="print-document commercial-document invoice-document">
           <div className="document-top"><div className="document-company"><img src="/norwest-logo.jpg" alt="Norwest Produce" width="390" height="142" /><div><strong>{companyForm.legalName}</strong><span>{companyForm.street}</span><span>{[companyForm.city, companyForm.state, companyForm.postalCode].filter(Boolean).join(", ")}</span></div></div><div className="document-title-block"><h3><span>INVOICE:</span><b>{invoicePreview.invoiceNumber}</b></h3><dl><dt>ISSUED:</dt><dd>{formatDocumentDate(invoicePreview.saleDate)}</dd><dt>P.O. #:</dt><dd>{invoicePreview.purchaseOrder || "N/A"}</dd><dt>PICKUP #:</dt><dd>{invoicePreview.pickupNumber}</dd><dt>PICKUP DATE:</dt><dd>{formatDocumentDate(invoicePreview.pickupDate)}</dd><dt>CREDIT TERMS:</dt><dd>21 Days</dd><dt>DUE DATE:</dt><dd>{formatDocumentDate(invoicePreview.dueDate)}</dd></dl></div></div>
           <div className="document-parties two-columns"><section><h4>BILL TO:</h4><strong>{invoicePreview.customer}</strong>{partnerAddress(documentCustomer).map((line) => <span key={line}>{line}</span>)}</section><section><h4>SHIP TO:</h4><strong>{invoicePreview.warehouse}</strong>{documentWarehouse ? <><span>{documentWarehouse.address}</span><span>PH: {formatPhone(documentWarehouse.phone)}</span></> : <span>Pickup destination</span>}</section></div>

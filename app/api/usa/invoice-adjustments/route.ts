@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const saleId = Number(payload.saleId);
     const reason = String(payload.reason || "").trim().toUpperCase() as InvoiceAdjustment["reason"];
     const notes = String(payload.notes || "").trim();
+    const internalNotes = String(payload.internalNotes || "").trim();
     if (!Number.isInteger(saleId) || saleId <= 0) return Response.json({ error: "Factura inválida." }, { status: 400 });
     if (!REASONS.has(reason)) return Response.json({ error: "Selecciona el motivo del ajuste." }, { status: 400 });
     if (!notes) return Response.json({ error: "Describe brevemente la razón del ajuste." }, { status: 400 });
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
       createdAt: new Date().toISOString(),
       reason,
       notes,
+      internalNotes,
       previousItems,
       adjustedItems,
       previousTotal,

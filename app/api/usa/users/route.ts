@@ -1,7 +1,7 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { userAccounts } from "../../../../db/schema";
-import { ALL_USER_PERMISSIONS, DEFAULT_ADMIN_USER, clean, hashPassword, safeUser, verifyPassword } from "../../../../lib/auth";
+import { ALL_USER_PERMISSIONS, DEFAULT_ADMIN_USER, clean, hashPassword, safeUser } from "../../../../lib/auth";
 
 const allowedPermissions = new Set<string>(ALL_USER_PERMISSIONS);
 
@@ -51,16 +51,15 @@ export async function PATCH(request: Request) {
   try {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id), fullName = clean(payload.fullName), alias = clean(payload.alias), email = clean(payload.email).toLowerCase();
-    const currentPassword = clean(payload.currentPassword), newPassword = clean(payload.newPassword), confirmNewPassword = clean(payload.confirmNewPassword);
+    const newPassword = clean(payload.newPassword), confirmNewPassword = clean(payload.confirmNewPassword);
     if (!Number.isInteger(id) || id <= 0 || !fullName || !alias || !email) return Response.json({ error: "Completa los datos obligatorios del usuario." }, { status: 400 });
-    const changingPassword = Boolean(currentPassword || newPassword || confirmNewPassword);
-    if (changingPassword && (!currentPassword || !newPassword || !confirmNewPassword)) return Response.json({ error: "Completa la contraseña actual, la nueva contraseña y su confirmación." }, { status: 400 });
+    const changingPassword = Boolean(newPassword || confirmNewPassword);
+    if (changingPassword && (!newPassword || !confirmNewPassword)) return Response.json({ error: "Completa la nueva contraseña y su confirmación." }, { status: 400 });
     if (changingPassword && newPassword.length < 8) return Response.json({ error: "La nueva contraseña debe tener al menos 8 caracteres." }, { status: 400 });
     if (changingPassword && newPassword !== confirmNewPassword) return Response.json({ error: "La nueva contraseña y su confirmación no coinciden." }, { status: 400 });
     const db = await getDb();
     const [existing] = await db.select().from(userAccounts).where(and(eq(userAccounts.id, id), eq(userAccounts.organizationCode, "USA"))).limit(1);
     if (!existing) return Response.json({ error: "Usuario no encontrado." }, { status: 404 });
-    if (changingPassword && !(await verifyPassword(currentPassword, existing.passwordHash))) return Response.json({ error: "La contraseña actual no es correcta." }, { status: 400 });
     const duplicate = await db.select({ id: userAccounts.id }).from(userAccounts).where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.alias, alias), ne(userAccounts.id, id))).limit(1);
     if (duplicate.length) return Response.json({ error: "Ese alias ya está registrado." }, { status: 409 });
     const values: Partial<typeof userAccounts.$inferInsert> = { fullName, alias, email, permissions: JSON.stringify(permissions(payload.permissions)), active: payload.active !== false };
