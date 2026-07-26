@@ -16,8 +16,9 @@ const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "
 const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 const INVOICE_TERMS = "Good Delivery Standars. Any claims for quality must be made within 24 hours of arrival at destination and must be supported with a timely federal inspection fo the complete lot in question. We reserve the right to deny credit. Negotiated under P.A.C.A. terms. INTEREST WILL ACCRUE ON ANY PAST BALANCE AT THE RATE OF 1.5% PER MONTH (18% PER ANNUM.) The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
 type Operation = "DIRECT_RESALE" | "IMPORTED_INVENTORY";
-type Section = "dashboard" | "catalogs" | "inventory" | "importQuote" | "invoicing" | "collections" | "settings";
+type Section = "dashboard" | "catalogs" | "inventory" | "importQuote" | "invoicing" | "collections" | "reports" | "settings";
 type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
+type ReportTab = "sales" | "inventory" | "collections" | "profit" | "adjustments";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
 type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
@@ -269,6 +270,10 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [collectionFilter, setCollectionFilter] = useState<CollectionFilter>("TODAS");
   const [collectionCustomer, setCollectionCustomer] = useState("");
   const [statementCustomer, setStatementCustomer] = useState<string | null>(null);
+  const [reportTab, setReportTab] = useState<ReportTab>("sales");
+  const [reportQuery, setReportQuery] = useState("");
+  const [reportFromDate, setReportFromDate] = useState("");
+  const [reportToDate, setReportToDate] = useState("");
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [partnerTypeFilter, setPartnerTypeFilter] = useState<CatalogType>("SUPPLIER");
   const [partnerModal, setPartnerModal] = useState<PartnerType | null>(null);
@@ -435,6 +440,11 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setSection("settings");
     setCompanySaveState("");
     void loadSettings();
+  }
+
+  function openReports() {
+    setSection("reports");
+    void Promise.all([loadPartners(), loadProducts(), loadColdStorages(), loadInventory(true)]);
   }
 
   async function saveCompanySettings(event: FormEvent) {
@@ -1681,6 +1691,101 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     };
   }, [salesRows, collectionFilter, collectionCustomer, collectionQuery]);
 
+  const reportSearch = reportQuery.trim().toLocaleLowerCase();
+  const matchesReportDate = (value: string | null | undefined) => {
+    if (!value) return !reportFromDate && !reportToDate;
+    return (!reportFromDate || value >= reportFromDate) && (!reportToDate || value <= reportToDate);
+  };
+  const saleBoxesFor = (sale: Sale) => {
+    const items = invoiceItemsFor(sale);
+    return items.length ? items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) : sale.boxes;
+  };
+  const saleTotalFor = (sale: Sale) => {
+    const items = invoiceItemsFor(sale);
+    return sale.total ?? items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
+  };
+  const saleProfitFor = (sale: Sale) => {
+    const items = invoiceItemsFor(sale);
+    return sale.profit ?? items.reduce((sum, item) => sum + (Number(item.unitPrice || 0) - Number(item.purchasePrice ?? sale.purchasePrice ?? 0)) * Number(item.quantity || 0), 0);
+  };
+  const reportSaleRows = useMemo(() => salesRows.filter((sale) => {
+    if (sale.canceledAt || !matchesReportDate(sale.saleDate)) return false;
+    if (!reportSearch) return true;
+    const items = invoiceItemsFor(sale);
+    const text = [
+      sale.customer,
+      sale.sellerName,
+      sale.invoiceNumber,
+      sale.pickupNumber,
+      sale.purchaseOrder,
+      sale.warehouse,
+      sale.supplier,
+      sale.product,
+      ...items.flatMap((item) => [item.product, item.presentation, item.size, item.label, productAlias(item.product)]),
+    ].join(" ").toLocaleLowerCase();
+    return text.includes(reportSearch);
+  }), [reportSearch, reportFromDate, reportToDate, salesRows, products]);
+
+  const reportInventoryRows = useMemo(() => inventoryLoadGroups.filter((group) => {
+    const date = group.first.receivedDate || group.first.loadDate;
+    if (!matchesReportDate(date)) return false;
+    if (!reportSearch) return true;
+    const text = [
+      group.first.pickupNumber,
+      group.first.supplier,
+      group.first.warehouse,
+      group.first.coldStorage,
+      ...group.lots.flatMap((lot) => [lot.product, lot.presentation, lot.size, lot.label, productAlias(lot.product)]),
+    ].join(" ").toLocaleLowerCase();
+    return text.includes(reportSearch);
+  }), [inventoryLoadGroups, products, reportFromDate, reportToDate, reportSearch]);
+
+  const reportCollectionRows = useMemo(() => salesRows.filter((sale) => {
+    if (!sale.invoiceNumber || sale.canceledAt || !matchesReportDate(sale.saleDate)) return false;
+    if (!reportSearch) return true;
+    const text = [sale.customer, sale.invoiceNumber, sale.pickupNumber, sale.purchaseOrder, sale.warehouse, sale.product].join(" ").toLocaleLowerCase();
+    return text.includes(reportSearch);
+  }).sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31")), [reportSearch, reportFromDate, reportToDate, salesRows]);
+
+  const reportProfitRows = useMemo(() => {
+    const groups = new Map<string, { product: string; operations: Set<string>; boxes: number; sales: number; profit: number }>();
+    reportSaleRows.forEach((sale) => {
+      const items = invoiceItemsFor(sale);
+      const lines = items.length ? items : [{ product: sale.product, presentation: sale.presentation || "", size: sale.size || "", label: sale.label || "", quantity: sale.boxes, unitPrice: sale.salePrice ?? 0, purchasePrice: sale.purchasePrice ?? 0 }];
+      lines.forEach((item) => {
+        const key = productAlias(item.product);
+        const current = groups.get(key) || { product: key, operations: new Set<string>(), boxes: 0, sales: 0, profit: 0 };
+        const quantity = Number(item.quantity || 0);
+        const saleAmount = quantity * Number(item.unitPrice || 0);
+        const profitAmount = quantity * (Number(item.unitPrice || 0) - Number(item.purchasePrice ?? sale.purchasePrice ?? 0));
+        current.operations.add(String(sale.id ?? sale.sourceRow ?? sale.pickupNumber));
+        current.boxes += quantity;
+        current.sales += saleAmount;
+        current.profit += profitAmount;
+        groups.set(key, current);
+      });
+    });
+    return Array.from(groups.values()).map((row) => ({ ...row, operationCount: row.operations.size, profitPerBox: row.boxes ? row.profit / row.boxes : 0 })).sort((a, b) => b.profit - a.profit);
+  }, [reportSaleRows, products]);
+
+  const reportAdjustmentRows = useMemo(() => salesRows.flatMap((sale) => adjustmentsFor(sale).map((adjustment) => ({ sale, adjustment }))).filter(({ sale, adjustment }) => {
+    const adjustmentDate = adjustment.createdAt.slice(0, 10);
+    if (!matchesReportDate(adjustmentDate)) return false;
+    if (!reportSearch) return true;
+    const text = [sale.customer, sale.invoiceNumber, sale.pickupNumber, sale.purchaseOrder, adjustment.number, adjustment.reason, adjustment.notes, adjustment.documentType].join(" ").toLocaleLowerCase();
+    return text.includes(reportSearch);
+  }).sort((a, b) => b.adjustment.createdAt.localeCompare(a.adjustment.createdAt)), [salesRows, reportSearch, reportFromDate, reportToDate]);
+
+  const reportSummary = useMemo(() => {
+    const pendingCollections = reportCollectionRows.filter((sale) => collectionStatus(sale) !== "PAGADAS");
+    return {
+      sales: reportSaleRows.reduce((sum, sale) => sum + saleTotalFor(sale), 0),
+      boxes: reportSaleRows.reduce((sum, sale) => sum + saleBoxesFor(sale), 0),
+      profit: reportSaleRows.reduce((sum, sale) => sum + saleProfitFor(sale), 0),
+      receivable: pendingCollections.reduce((sum, sale) => sum + (sale.total ?? 0), 0),
+    };
+  }, [reportSaleRows, reportCollectionRows]);
+
   const statementRows = useMemo(() => {
     if (!statementCustomer) return [];
     const grouped = new Map<string, Sale>();
@@ -1847,7 +1952,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button>
           <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
           <button className={`nav-item ${section === "importQuote" ? "active" : ""}`} onClick={() => setSection("importQuote")}><span>$</span> Cotización para Importar</button>
-          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => { setSection("collections"); void loadPartners(); }}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><a className="nav-item"><span>⌁</span> Reportes</a><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
+          <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => { setSection("collections"); void loadPartners(); }}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><button className={`nav-item ${section === "reports" ? "active" : ""}`} onClick={openReports}><span>⌁</span> Reportes</button><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="operation-pill"><span>USA</span><div><strong>Norwest Produce LLC</strong><small>Operación activa</small></div></div>
@@ -2021,6 +2126,46 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <div className="filters collections-filters"><label className="search-box"><span>⌕</span><input value={collectionQuery} onChange={(event) => setCollectionQuery(event.target.value)} placeholder="Buscar cliente, factura, PO# o pickup" /></label><div className="collection-filter-buttons">{(["TODAS", "VIGENTES", "VENCIDAS", "PAGADAS"] as CollectionFilter[]).map((filter) => <button type="button" className={collectionFilter === filter ? "active" : ""} key={filter} onClick={() => setCollectionFilter(filter)}>{filter === "TODAS" ? "Todas" : filter.charAt(0) + filter.slice(1).toLocaleLowerCase()}</button>)}</div></div>
           <div className="table-wrap collections-table"><table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Vencimiento</th><th>Antigüedad</th><th>Estatus</th><th className="numeric">Saldo</th><th></th></tr></thead><tbody>{collectionData.rows.map((row) => { const status = collectionStatus(row); const days = overdueDays(row.dueDate); return <tr key={row.id}><td><strong>#{row.invoiceNumber}</strong><small>Pickup #{row.pickupNumber}</small></td><td><strong>{row.customer}</strong><small>PO# {row.purchaseOrder || "N/A"}</small></td><td>{formatDate(row.saleDate)}</td><td>{formatDate(row.dueDate)}</td><td><span className={`aging-chip ${days > 90 ? "critical" : days ? "overdue" : "current"}`}>{agingLabel(row)}</span></td><td><span className={`collection-status ${status.toLocaleLowerCase()}`}>{status === "PAGADAS" ? "Pagada" : status === "VENCIDAS" ? "Vencida" : "Vigente"}</span></td><td className="numeric strong-number">{money.format(status === "PAGADAS" ? 0 : row.total ?? 0)}</td><td><button type="button" className="edit-button" onClick={() => openInvoicePreview(row)}>Ver factura</button></td></tr>; })}</tbody></table></div>
           {collectionData.rows.length === 0 && <div className="catalog-empty"><strong>No hay facturas en esta vista</strong><span>Cambia el filtro o genera una factura para que aparezca en cartera.</span></div>}
+        </section>
+      </section>}
+
+      {section === "reports" && <section className="erp-content">
+        <header className="topbar"><div><p className="eyebrow">Norwest Produce LLC · USA</p><h1>Reportes</h1></div></header>
+        <section className="summary-grid report-summary">
+          <article className="metric-card accent-green"><div className="metric-icon">$</div><p>Ventas filtradas</p><strong>{money.format(reportSummary.sales)}</strong><span>{number.format(reportSaleRows.length)} operaciones</span></article>
+          <article className="metric-card accent-blue"><div className="metric-icon">□</div><p>Cajas vendidas</p><strong>{number.format(reportSummary.boxes)}</strong><span>Segun ventas del periodo</span></article>
+          <article className="metric-card accent-gold"><div className="metric-icon">↗</div><p>Utilidad</p><strong>{money.format(reportSummary.profit)}</strong><span>Utilidad estimada registrada</span></article>
+          <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Cartera</p><strong>{money.format(reportSummary.receivable)}</strong><span>Saldo pendiente en facturas filtradas</span></article>
+        </section>
+        <section className="sales-panel reports-panel">
+          <div className="panel-heading"><div><h2>Centro de reportes USA</h2><p>Consulta ventas, inventario, cartera, utilidad y ajustes sin modificar la operacion.</p></div><span className="record-count">{reportTab === "sales" ? reportSaleRows.length : reportTab === "inventory" ? reportInventoryRows.length : reportTab === "collections" ? reportCollectionRows.length : reportTab === "profit" ? reportProfitRows.length : reportAdjustmentRows.length} registros</span></div>
+          <div className="filters report-filters">
+            <label className="search-box"><span>⌕</span><input value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar cliente, factura, pickup, PO, producto o proveedor" /></label>
+            <label className="report-date-field"><span>Desde</span><input type="date" value={reportFromDate} onChange={(event) => setReportFromDate(event.target.value)} /></label>
+            <label className="report-date-field"><span>Hasta</span><input type="date" value={reportToDate} onChange={(event) => setReportToDate(event.target.value)} /></label>
+            <button type="button" className="secondary-button report-reset-button" onClick={() => { setReportQuery(""); setReportFromDate(""); setReportToDate(""); }}>Limpiar</button>
+          </div>
+          <div className="report-tabs">
+            {([
+              ["sales", "Ventas"],
+              ["inventory", "Inventario"],
+              ["collections", "Cartera"],
+              ["profit", "Utilidad"],
+              ["adjustments", "Ajustes"],
+            ] as Array<[ReportTab, string]>).map(([value, label]) => <button type="button" key={value} className={reportTab === value ? "active" : ""} onClick={() => setReportTab(value)}>{label}</button>)}
+          </div>
+
+          {reportTab === "sales" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Operacion</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th>Bodega</th><th className="numeric">Cajas</th><th className="numeric">Total</th><th className="numeric">Utilidad</th><th>Factura</th></tr></thead><tbody>{reportSaleRows.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td><strong>{sale.customer}</strong><small>{sale.sellerName || "Sin vendedor asignado"}</small></td><td><span className={`operation-tag ${sale.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{sale.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale)}</td><td>{sale.warehouse}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className="numeric strong-number">{money.format(saleProfitFor(sale))}</td><td>{sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(sale)}><span className="invoice-chip invoice-ok">OK</span><small>{sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td></tr>)}</tbody></table></div>}
+
+          {reportTab === "inventory" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha carga</th><th>Fecha entrada</th><th>Factura #</th><th>Proveedor</th><th>Producto</th><th>Bodega</th><th className="numeric">Cajas</th><th className="numeric">Disponibles</th><th className="numeric">Costo total</th><th className="numeric">Costo/caja</th><th>Estado</th></tr></thead><tbody>{reportInventoryRows.map((group) => { const lot = group.first; const aliases = Array.from(new Set(group.lots.map((item) => productAlias(item.product)))); const totalImportCost = group.lots.reduce((sum, item) => sum + (item.totalImportCost || 0), 0); const unitCost = group.totalBoxes ? totalImportCost / group.totalBoxes : lot.unitCost; return <tr key={group.key}><td>{formatDate(lot.loadDate || null)}</td><td>{formatDate(lot.receivedDate)}</td><td><strong>{lot.pickupNumber || "N/A"}</strong></td><td>{lot.supplier || "N/A"}</td><td><button type="button" className="multi-product-button" onClick={() => setInventoryDetailLots(group.lots)}><strong>{aliases.join(" / ")}</strong><small>{group.lots.length > 1 ? `${group.lots.length} productos - Ver detalle` : [lot.product, lot.size, lot.presentation, lot.label].filter(Boolean).join(" - ") || "N/A"}</small></button></td><td>{lot.coldStorage || lot.warehouse}</td><td className="numeric">{number.format(group.totalBoxes)}</td><td className="numeric strong-number">{number.format(group.availableBoxes)}</td><td className="numeric strong-number">{money.format(totalImportCost)}</td><td className="numeric">{unitCost == null ? "N/A" : money.format(unitCost)}</td><td>{group.allReceived ? <span className="status-tag ok">Received</span> : <span className="status-tag warning">En transito</span>}</td></tr>; })}</tbody></table></div>}
+
+          {reportTab === "collections" && <div className="table-wrap report-table"><table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha</th><th>Vencimiento</th><th>Antiguedad</th><th>PO / Pickup</th><th>Estatus</th><th className="numeric">Saldo</th><th></th></tr></thead><tbody>{reportCollectionRows.map((sale) => { const status = collectionStatus(sale); const days = overdueDays(sale.dueDate); return <tr key={sale.id}><td><strong>#{sale.invoiceNumber}</strong></td><td>{sale.customer}</td><td>{formatDate(sale.saleDate)}</td><td>{formatDate(sale.dueDate)}</td><td><span className={`aging-chip ${days > 90 ? "critical" : days ? "overdue" : "current"}`}>{agingLabel(sale)}</span></td><td><strong>{sale.purchaseOrder || "N/A"}</strong><small>Pickup #{sale.pickupNumber}</small></td><td><span className={`collection-status ${status.toLocaleLowerCase()}`}>{status === "PAGADAS" ? "Pagada" : status === "VENCIDAS" ? "Vencida" : "Vigente"}</span></td><td className="numeric strong-number">{money.format(status === "PAGADAS" ? 0 : sale.total ?? 0)}</td><td><button type="button" className="edit-button" onClick={() => openInvoicePreview(sale)}>Ver factura</button></td></tr>; })}</tbody></table></div>}
+
+          {reportTab === "profit" && <div className="table-wrap report-table"><table><thead><tr><th>Producto / alias</th><th className="numeric">Operaciones</th><th className="numeric">Cajas</th><th className="numeric">Ventas</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad/caja</th></tr></thead><tbody>{reportProfitRows.map((row) => <tr key={row.product}><td><strong>{row.product}</strong></td><td className="numeric">{number.format(row.operationCount)}</td><td className="numeric">{number.format(row.boxes)}</td><td className="numeric strong-number">{money.format(row.sales)}</td><td className={`numeric strong-number ${row.profit < 0 ? "negative-number" : ""}`}>{money.format(row.profit)}</td><td className={`numeric ${row.profitPerBox < 0 ? "negative-number" : ""}`}>{money.format(row.profitPerBox)}</td></tr>)}</tbody></table></div>}
+
+          {reportTab === "adjustments" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Ajuste</th><th>Factura</th><th>Cliente</th><th>Motivo</th><th>Tipo</th><th className="numeric">Diferencia</th><th>Notas</th><th></th></tr></thead><tbody>{reportAdjustmentRows.map(({ sale, adjustment }) => <tr key={`${sale.id}-${adjustment.number}`}><td>{formatDate(adjustment.createdAt.slice(0, 10))}</td><td><strong>{adjustment.number}</strong></td><td>{sale.invoiceNumber || "N/A"}</td><td>{sale.customer}</td><td>{adjustment.reason}</td><td>{adjustment.documentType}</td><td className={`numeric strong-number ${adjustment.difference < 0 ? "negative-number" : ""}`}>{money.format(adjustment.difference)}</td><td>{adjustment.notes || "Sin notas"}</td><td><button type="button" className="edit-button" onClick={() => setAdjustmentPreview({ sale, adjustment })}>Ver ajuste</button></td></tr>)}</tbody></table></div>}
+
+          {((reportTab === "sales" && reportSaleRows.length === 0) || (reportTab === "inventory" && reportInventoryRows.length === 0) || (reportTab === "collections" && reportCollectionRows.length === 0) || (reportTab === "profit" && reportProfitRows.length === 0) || (reportTab === "adjustments" && reportAdjustmentRows.length === 0)) && <div className="catalog-empty"><strong>No hay informacion para mostrar</strong><span>Ajusta la busqueda o el rango de fechas para consultar otros registros.</span></div>}
         </section>
       </section>}
 
