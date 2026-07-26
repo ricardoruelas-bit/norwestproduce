@@ -9,6 +9,7 @@ import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, Invoi
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
 const number = new Intl.NumberFormat("en-US");
+const quoteNumber = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const shortDate = new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
 const documentDate = new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit", year: "numeric", timeZone: "UTC" });
 const SALES_ORDER_TERMS = "The perishable agricultural commodities listed on this invoice are sold subject to the statutory trust authorized by section 5(c) of the Perishable Agricultural Commodities Act, 1930 (7 U.S.C. 499e(c)). The seller of these commodities retains a trust claim over these commodities, all inventories of food or other products derived from these commodities, and any receivables or proceeds from the sale of these commodities until full payment is received. All claims must be supported by USDA Inspection Certificate. The tomatoes shipped under this bill of lading and sold pursuant to this invoice are subject to: 1) the 2019 Suspension Agreement between the United States Department of Commerce and certain tomato growers; 2) any subsequent amendments, clarifications or modifications thereof; and 3) certain letter agreements between yourselves and ourselves regarding the same, each of which is incorporated by this reference as if fully set forth herein. Copies of said agreements will be sent to you upon request. Failure to abide by these terms constitutes a violation of Section 2 of the PACA (7 U.S.C. §499b) and may subject the violator to disciplinary proceedings. Notice to subsequent purchaser or re-packer. These articles are imported. The requirements of 19 U.S.C. §1304 and 19 C.F.R. Part 134 provide that the articles or their containers must be marked in a conspicuous place as legibly, indelibly and permanently as the nature of the article or container will permit, in such a manner as to indicate to an ultimate purchaser in the United States, the English name of the country of origin of the articles. After payment is due, interest will accrue on unpaid balances at a rate of 18% per annum (1.5% per month) until paid. In the event a legal or other action is commenced to collect sums due under this invoice, the prevailing party shall be entitled to reimbursement of all costs and fees including reasonable attorney’s fees incurred. With the exception of tomatoes, which are covered by the Suspension Agreement, any variance noted by the receiver as to quantity, or price disparity must be brought to seller’s attention within 24 hours after the receipt of the merchandise. No adjustments on the above items will be honored unless seller is notified as herein stated.";
@@ -23,7 +24,8 @@ type InventoryEntryItem = { product: string; presentation: string; size: string;
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
 type AdjustmentLineItem = InvoiceItem & { noAdjustment?: boolean };
-type ImportQuoteItem = { product: string; weight: string; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; usCostsUsd: string; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; otherCostsUsd: string; marketPriceUsd: string; exchangeRate: string };
+type ImportQuoteItem = { product: string; weight: string; weightUnit: "KG" | "LBS"; pallets: string; boxes: string; boxesPerPallet: string; purchasePriceMxn: string; freightMxn: string; mexicoCostsMxn: string; usCostsUsd: string; inspectionUsd: string; coldStorageUsd: string; overweightMxn: string; otherCostsUsd: string; marketPriceUsd: string; exchangeRate: string };
+type ImportQuoteNumberField = "weight" | "pallets" | "boxes" | "boxesPerPallet" | "purchasePriceMxn" | "freightMxn" | "mexicoCostsMxn" | "usCostsUsd" | "inspectionUsd" | "coldStorageUsd" | "overweightMxn" | "otherCostsUsd" | "marketPriceUsd" | "exchangeRate";
 const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
@@ -56,6 +58,23 @@ function formatPhone(value: string | null | undefined) {
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `(${digits.slice(0, 3)})-${digits.slice(3)}`;
   return `(${digits.slice(0, 3)})-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function parseQuoteNumber(value: string | number | null | undefined) {
+  const normalized = String(value ?? "").replace(/,/g, "").trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function cleanQuoteNumberInput(value: string) {
+  const cleaned = value.replace(/[^\d.]/g, "");
+  const [whole, ...decimals] = cleaned.split(".");
+  return decimals.length ? `${whole}.${decimals.join("").slice(0, 2)}` : whole;
+}
+
+function formatQuoteNumberInput(value: string) {
+  const parsed = parseQuoteNumber(value);
+  return parsed ? quoteNumber.format(parsed) : "";
 }
 
 function parseJsonArray(value: string | null | undefined) {
@@ -202,7 +221,7 @@ const blankInventory = {
   attachments: [] as string[], costAttachments: {} as Record<CostKey, string[]>,
 };
 const blankInventoryItem: InventoryEntryItem = { product: "", presentation: "", size: "", label: "", totalBoxes: "", boxesPerPallet: "", purchasePrice: "", purchaseCurrency: "MXN" };
-const blankImportQuoteItem: ImportQuoteItem = { product: "", weight: "", pallets: "", boxes: "", boxesPerPallet: "", purchasePriceMxn: "", freightMxn: "", mexicoCostsMxn: "", usCostsUsd: "", inspectionUsd: "", coldStorageUsd: "", overweightMxn: "", otherCostsUsd: "", marketPriceUsd: "", exchangeRate: "" };
+const blankImportQuoteItem: ImportQuoteItem = { product: "", weight: "", weightUnit: "LBS", pallets: "", boxes: "", boxesPerPallet: "", purchasePriceMxn: "", freightMxn: "", mexicoCostsMxn: "", usCostsUsd: "", inspectionUsd: "", coldStorageUsd: "", overweightMxn: "", otherCostsUsd: "", marketPriceUsd: "", exchangeRate: "" };
 
 const blankProduct = { name: "", alias: "", presentation: "", size: "", label: "", boxesPerPallet: "" };
 const blankColdStorage = { name: "", address: "", phone: "", stateCode: "", stateName: "", city: "", street: "", exteriorNumber: "", interiorNumber: "", postalCode: "" };
@@ -1280,6 +1299,24 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item));
   }
 
+  function updateImportQuoteNumber(index: number, field: ImportQuoteNumberField, value: string) {
+    updateImportQuoteItem(index, { [field]: cleanQuoteNumberInput(value) } as Partial<ImportQuoteItem>);
+  }
+
+  function formatImportQuoteNumber(index: number, field: ImportQuoteNumberField) {
+    setImportQuoteItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: formatQuoteNumberInput(item[field]) } : item));
+  }
+
+  function moveToNextQuoteField(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement) || target.type === "submit") return;
+    event.preventDefault();
+    const fields = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("input:not([disabled]):not([readonly]), select:not([disabled])"));
+    const index = fields.indexOf(target);
+    if (index >= 0 && index < fields.length - 1) fields[index + 1].focus();
+  }
+
   function addImportQuoteItem() {
     setImportQuoteItems((current) => [...current, { ...blankImportQuoteItem }]);
   }
@@ -1645,18 +1682,18 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
   const importQuoteSummary = useMemo(() => {
     const rows = importQuoteItems.map((item, index) => {
-      const pallets = Number(item.pallets) || 0;
-      const boxesPerPallet = Number(item.boxesPerPallet) || 0;
+      const pallets = parseQuoteNumber(item.pallets);
+      const boxesPerPallet = parseQuoteNumber(item.boxesPerPallet);
       const calculatedBoxes = pallets && boxesPerPallet ? pallets * boxesPerPallet : 0;
-      const boxes = calculatedBoxes || Number(item.boxes) || 0;
-      const rate = Number(item.exchangeRate) || 0;
-      const mxnToUsd = (value: string) => rate ? (Number(value) || 0) / rate : 0;
+      const boxes = calculatedBoxes || parseQuoteNumber(item.boxes);
+      const rate = parseQuoteNumber(item.exchangeRate);
+      const mxnToUsd = (value: string) => rate ? parseQuoteNumber(value) / rate : 0;
       const purchaseUsd = mxnToUsd(item.purchasePriceMxn);
-      const freightMxn = Number(item.freightMxn) || 0;
-      const importTotalUsd = mxnToUsd(String(freightMxn * 1.16)) + mxnToUsd(item.mexicoCostsMxn) + mxnToUsd(item.overweightMxn) + (Number(item.usCostsUsd) || 0) + (Number(item.inspectionUsd) || 0) + ((Number(item.coldStorageUsd) || 0) * pallets) + (Number(item.otherCostsUsd) || 0);
+      const freightMxn = parseQuoteNumber(item.freightMxn);
+      const importTotalUsd = mxnToUsd(String(freightMxn * 1.16)) + mxnToUsd(item.mexicoCostsMxn) + mxnToUsd(item.overweightMxn) + parseQuoteNumber(item.usCostsUsd) + parseQuoteNumber(item.inspectionUsd) + (parseQuoteNumber(item.coldStorageUsd) * pallets) + parseQuoteNumber(item.otherCostsUsd);
       const importCostBox = boxes ? importTotalUsd / boxes : 0;
       const landedCost = purchaseUsd + importCostBox;
-      const marketPrice = Number(item.marketPriceUsd) || 0;
+      const marketPrice = parseQuoteNumber(item.marketPriceUsd);
       const profitBox = marketPrice - landedCost;
       const totalProfit = profitBox * boxes;
       return { key: `${item.product || "producto"}-${index}`, item, pallets, boxes, calculatedBoxes, purchaseUsd, importTotalUsd, importCostBox, landedCost, marketPrice, profitBox, totalProfit };
@@ -1847,36 +1884,35 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <div className="import-quote-list">{importQuoteItems.map((item, index) => {
             const result = importQuoteSummary.rows[index];
             const productOptionsId = `import-quote-products-${index}`;
-            return <article className="import-quote-card import-quote-sheet" key={index}>
+            return <article className="import-quote-card import-quote-sheet" key={index} onKeyDown={moveToNextQuoteField}>
               <div className="quote-sheet-toolbar"><strong>Producto {index + 1}</strong><button type="button" className="sale-line-remove" disabled={importQuoteItems.length === 1} aria-label="Eliminar producto de cotización" onClick={() => removeImportQuoteItem(index)}>×</button></div>
               <div className="quote-sheet-body">
                 <section className="quote-sheet-left">
                   <div className="quote-sheet-title">Datos del producto</div>
                   <div className="quote-product-line">
                     <label className="quote-product-field"><span>Producto</span><input list={productOptionsId} value={item.product} onChange={(event) => updateImportQuoteItem(index, { product: event.target.value })} placeholder="Escribe o selecciona producto" /><datalist id={productOptionsId}>{productCatalogGroups.map((group) => <option key={group.key} value={group.name} />)}</datalist></label>
-                    <label><span>Peso</span><input value={item.weight} onChange={(event) => updateImportQuoteItem(index, { weight: event.target.value })} placeholder="Ej. 50 lbs" /></label>
+                    <label><span>Peso</span><div className="quote-weight-field"><input inputMode="decimal" value={item.weight} onBlur={() => formatImportQuoteNumber(index, "weight")} onChange={(event) => updateImportQuoteNumber(index, "weight", event.target.value)} placeholder="Ej. 50" /><select value={item.weightUnit} onChange={(event) => updateImportQuoteItem(index, { weightUnit: event.target.value as "KG" | "LBS" })}><option value="KG">KG</option><option value="LBS">LBS</option></select></div></label>
                   </div>
-                  <div className="quote-sheet-row"><span>Cajas/Bultos por pallet</span><input min="0" step="1" type="number" value={item.boxesPerPallet} onChange={(event) => updateImportQuoteItem(index, { boxesPerPallet: event.target.value })} /></div>
-                  <div className="quote-sheet-row"><span>Pallets</span><input min="0" step="1" type="number" value={item.pallets} onChange={(event) => updateImportQuoteItem(index, { pallets: event.target.value })} /></div>
-                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input min="0" step="1" type="number" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? String(result.calculatedBoxes) : item.boxes} onChange={(event) => updateImportQuoteItem(index, { boxes: event.target.value })} /></div>
+                  <div className="quote-sheet-row"><span>Cajas/Bultos por pallet</span><input inputMode="decimal" value={item.boxesPerPallet} onBlur={() => formatImportQuoteNumber(index, "boxesPerPallet")} onChange={(event) => updateImportQuoteNumber(index, "boxesPerPallet", event.target.value)} /></div>
+                  <div className="quote-sheet-row"><span>Pallets</span><input inputMode="decimal" value={item.pallets} onBlur={() => formatImportQuoteNumber(index, "pallets")} onChange={(event) => updateImportQuoteNumber(index, "pallets", event.target.value)} /></div>
+                  <div className="quote-sheet-row quote-sheet-total-row"><span>Total cajas</span><input inputMode="decimal" readOnly={Boolean(result?.calculatedBoxes)} value={result?.calculatedBoxes ? quoteNumber.format(result.calculatedBoxes) : item.boxes} onBlur={() => formatImportQuoteNumber(index, "boxes")} onChange={(event) => updateImportQuoteNumber(index, "boxes", event.target.value)} /></div>
                   <div className="quote-sheet-subtitle">Costo x caja o bulto</div>
-                  <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.purchasePriceMxn} onChange={(event) => updateImportQuoteItem(index, { purchasePriceMxn: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>Precio de venta USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.marketPriceUsd} onChange={(event) => updateImportQuoteItem(index, { marketPriceUsd: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Compra MXN/caja o bulto</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.purchasePriceMxn} onBlur={() => formatImportQuoteNumber(index, "purchasePriceMxn")} onChange={(event) => updateImportQuoteNumber(index, "purchasePriceMxn", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Precio de venta USD</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.marketPriceUsd} onBlur={() => formatImportQuoteNumber(index, "marketPriceUsd")} onChange={(event) => updateImportQuoteNumber(index, "marketPriceUsd", event.target.value)} /></span></div>
                 </section>
                 <section className="quote-sheet-right">
                   <div className="quote-sheet-title">Gastos</div>
-                  <div className="quote-sheet-row"><span>Tipo de cambio</span><input min="0" step="0.0001" type="number" value={item.exchangeRate} onChange={(event) => updateImportQuoteItem(index, { exchangeRate: event.target.value })} placeholder="MXN por USD" /></div>
-                  <div className="quote-sheet-row"><span>Flete + transfer MXN</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.freightMxn} onChange={(event) => updateImportQuoteItem(index, { freightMxn: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>IVA</span><input readOnly value={moneyMxn.format((Number(item.freightMxn) || 0) * 0.16)} /></div>
-                  <div className="quote-sheet-row"><span>Gastos aduana MX</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.mexicoCostsMxn} onChange={(event) => updateImportQuoteItem(index, { mexicoCostsMxn: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>Gastos aduana USA</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.usCostsUsd} onChange={(event) => updateImportQuoteItem(index, { usCostsUsd: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>Inspección USDA</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.inspectionUsd} onChange={(event) => updateImportQuoteItem(index, { inspectionUsd: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>Cold storage x pallet</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.coldStorageUsd} onChange={(event) => updateImportQuoteItem(index, { coldStorageUsd: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>Sobrepeso</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.overweightMxn} onChange={(event) => updateImportQuoteItem(index, { overweightMxn: event.target.value })} /></span></div>
-                  <div className="quote-sheet-row"><span>Otros USD</span><span className="dollar-input"><span>$</span><input min="0" step="0.01" type="number" value={item.otherCostsUsd} onChange={(event) => updateImportQuoteItem(index, { otherCostsUsd: event.target.value })} /></span></div>
+                  <div className="quote-sheet-row"><span>Tipo de cambio</span><input inputMode="decimal" value={item.exchangeRate} onBlur={() => formatImportQuoteNumber(index, "exchangeRate")} onChange={(event) => updateImportQuoteNumber(index, "exchangeRate", event.target.value)} placeholder="MXN por USD" /></div>
+                  <div className="quote-sheet-row"><span>Flete + transfer MXN</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.freightMxn} onBlur={() => formatImportQuoteNumber(index, "freightMxn")} onChange={(event) => updateImportQuoteNumber(index, "freightMxn", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>IVA</span><input readOnly value={quoteNumber.format(parseQuoteNumber(item.freightMxn) * 0.16)} /></div>
+                  <div className="quote-sheet-row"><span>Gastos aduana MX</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.mexicoCostsMxn} onBlur={() => formatImportQuoteNumber(index, "mexicoCostsMxn")} onChange={(event) => updateImportQuoteNumber(index, "mexicoCostsMxn", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Gastos aduana USA</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.usCostsUsd} onBlur={() => formatImportQuoteNumber(index, "usCostsUsd")} onChange={(event) => updateImportQuoteNumber(index, "usCostsUsd", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Inspección USDA</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.inspectionUsd} onBlur={() => formatImportQuoteNumber(index, "inspectionUsd")} onChange={(event) => updateImportQuoteNumber(index, "inspectionUsd", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Cold storage x pallet</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.coldStorageUsd} onBlur={() => formatImportQuoteNumber(index, "coldStorageUsd")} onChange={(event) => updateImportQuoteNumber(index, "coldStorageUsd", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Sobrepeso</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.overweightMxn} onBlur={() => formatImportQuoteNumber(index, "overweightMxn")} onChange={(event) => updateImportQuoteNumber(index, "overweightMxn", event.target.value)} /></span></div>
+                  <div className="quote-sheet-row"><span>Otros USD</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={item.otherCostsUsd} onBlur={() => formatImportQuoteNumber(index, "otherCostsUsd")} onChange={(event) => updateImportQuoteNumber(index, "otherCostsUsd", event.target.value)} /></span></div>
                 </section>
               </div>
-              <div className="quote-sheet-notes"><span>* En caso de intensivo en aduana americana, puede haber cargo extra.</span><span>* Los gastos se consideran estimados y deben estar soportados por factura o recibo.</span></div>
               <div className="import-quote-result quote-sheet-results">
                 <span><small>Compra USD/caja</small><strong>{money.format(result?.purchaseUsd || 0)}</strong></span>
                 <span><small>Importación USD/caja</small><strong>{money.format(result?.importCostBox || 0)}</strong></span>
