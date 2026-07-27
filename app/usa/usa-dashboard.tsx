@@ -317,6 +317,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
   const [expandedReportGroup, setExpandedReportGroup] = useState<string | null>(null);
+  const [reportPrintMode, setReportPrintMode] = useState(false);
   const [sellerLiquidations, setSellerLiquidations] = useState<SellerLiquidation[]>([]);
   const [sellerLiquidationForm, setSellerLiquidationForm] = useState({ sellerName: "", liquidationDate: localDateKey(), amount: "", notes: "" });
   const [sellerLiquidationState, setSellerLiquidationState] = useState("");
@@ -427,6 +428,13 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     return () => document.removeEventListener("pointerdown", closeOpenFilters);
   }, []);
 
+  useEffect(() => {
+    if (!reportPrintMode) return undefined;
+    const finish = () => setReportPrintMode(false);
+    window.addEventListener("afterprint", finish);
+    return () => window.removeEventListener("afterprint", finish);
+  }, [reportPrintMode]);
+
   async function loadPartners() {
     try {
       const response = await fetch("/api/usa/partners");
@@ -527,6 +535,11 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   function openReports() {
     setSection("reports");
     void Promise.all([loadPartners(), loadProducts(), loadColdStorages(), loadInventory(true), loadSettings(), loadSellerLiquidations()]);
+  }
+
+  function printCurrentReport() {
+    setReportPrintMode(true);
+    window.setTimeout(() => window.print(), 50);
   }
 
   function openAdministration() {
@@ -2238,7 +2251,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   }
 
   return (
-    <main className="erp-shell">
+    <main className={`erp-shell ${reportPrintMode ? "report-print-mode" : ""}`}>
       <aside className="sidebar">
         <div className="sidebar-brand"><img className="sidebar-logo" src="/norwest-logo.jpg" alt="Norwest Produce" /></div>
         <nav>
@@ -2461,7 +2474,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <article className="metric-card accent-gold"><div className="metric-icon">↗</div><p>Utilidad</p><strong>{money.format(reportSummary.profit)}</strong><span>Utilidad estimada registrada</span></article>
           <article className="metric-card accent-earth"><div className="metric-icon">◎</div><p>Cartera</p><strong>{money.format(reportSummary.receivable)}</strong><span>Saldo pendiente en facturas filtradas</span></article>
         </section>
-        <section className="sales-panel reports-panel">
+        <section className="sales-panel reports-panel reports-print-scope">
           <div className="panel-heading"><div><h2>Centro de reportes USA</h2><p>Consulta ventas, inventario, cartera, utilidad y ajustes sin modificar la operacion.</p></div><span className="record-count">{reportRecordCount} registros</span></div>
           <div className="filters report-filters">
             <label className="search-box"><span>⌕</span><input value={reportQuery} onChange={(event) => setReportQuery(event.target.value)} placeholder="Buscar cliente, factura, pickup, PO, producto o proveedor" /></label>
@@ -2471,6 +2484,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           </div>
           <div className="report-selector-bar">
             <label>Reporte<select value={reportTab} onChange={(event) => { setReportTab(event.target.value as ReportTab); setExpandedReportGroup(null); setSellerDetailName(null); }}>{REPORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <button type="button" className="primary-button report-print-button" onClick={printCurrentReport}>Imprimir en PDF</button>
           </div>
 
           {reportTab === "sales" && <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Operacion</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th>Bodega</th><th className="numeric">Cajas</th><th className="numeric">Total</th><th className="numeric">Utilidad</th><th>Factura</th></tr></thead><tbody>{reportSaleRows.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td><strong>{sale.customer}</strong><small>{canonicalSellerName(sale.sellerName) || "Sin vendedor asignado"}</small></td><td><span className={`operation-tag ${sale.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{sale.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale)}</td><td>{sale.warehouse}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className="numeric strong-number">{money.format(saleProfitFor(sale))}</td><td>{sale.invoiceNumber ? <button type="button" className="invoice-number-button" onClick={() => openInvoicePreview(sale)}><span className="invoice-chip invoice-ok">OK</span><small>{sale.invoiceNumber}</small></button> : <span className="pending-text">Pendiente</span>}</td></tr>)}</tbody></table></div>}
@@ -2681,9 +2695,9 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         {statusSaveState && <p className="form-message">{statusSaveState}</p>}<div className="modal-actions status-modal-actions"><button type="button" className="secondary-button" onClick={closeStatusModal}>Cancelar</button><button type="button" className="secondary-button" onClick={() => void saveUsdaStatus(true)}>Aún no la tengo</button><button type="button" className="primary-button" disabled={!usdaFile} onClick={() => void saveUsdaStatus(false)}>Guardar inspección</button></div>
       </section></div>}
 
-      {importLoadDetail && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal sale-modal-wide">
+      {importLoadDetail && <div className="modal-backdrop modal-backdrop-elevated"><section className="sale-modal sale-modal-wide import-load-detail-modal">
         <div className="modal-heading"><div><p className="eyebrow">Utilidad por carga importada</p><h2>Factura de carga {importLoadDetail.loadReference}</h2><p className="modal-intro">Detalle de ventas generadas desde esta carga.</p></div></div>
-        <div className="table-wrap report-table"><table><thead><tr><th>Fecha</th><th>Factura venta</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{importLoadDetail.sales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td><strong>{sale.customer}</strong><small>{canonicalSellerName(sale.sellerName)}</small></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale, true)}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric strong-number ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric">{money.format(sellerProfitFor(sale))}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap report-table import-load-detail-table"><table><thead><tr><th>Fecha</th><th>Factura venta</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Venta</th><th className="numeric">Utilidad</th><th className="numeric">Utilidad vendedores</th></tr></thead><tbody>{importLoadDetail.sales.map((sale, index) => <tr key={sale.id ?? `${sale.pickupNumber}-${index}`}><td>{formatDate(sale.saleDate)}</td><td>{sale.invoiceNumber || "Pendiente"}</td><td><strong>{sale.customer}</strong><small>{canonicalSellerName(sale.sellerName)}</small></td><td>{sale.purchaseOrder || "N/A"}</td><td>{sale.pickupNumber || "N/A"}</td><td>{productCell(sale, true)}</td><td className="numeric">{number.format(saleBoxesFor(sale))}</td><td className="numeric strong-number">{money.format(saleTotalFor(sale))}</td><td className={`numeric strong-number ${saleProfitFor(sale) < 0 ? "negative-number" : ""}`}>{money.format(saleProfitFor(sale))}</td><td className="numeric">{money.format(sellerProfitFor(sale))}</td></tr>)}</tbody></table></div>
         <div className="modal-actions"><button type="button" className="primary-button" onClick={() => setImportLoadDetail(null)}>Ok</button></div>
       </section></div>}
 
@@ -2721,7 +2735,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
           <div className="statement-customer"><small>STATEMENT FOR:</small><strong>{statementCustomer}</strong>{partnerAddress(partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === statementCustomer)).map((line) => <span key={line}>{line}</span>)}</div>
           <table className="statement-table"><thead><tr><th>Invoice</th><th>Invoice Date</th><th>Due Date</th><th>PO #</th><th>Pickup #</th><th>Status</th><th className="numeric">Amount Due</th></tr></thead><tbody>{statementRows.map((row) => <tr key={row.id}><td><strong>#{row.invoiceNumber}</strong></td><td>{formatDocumentDate(row.saleDate)}</td><td>{formatDocumentDate(row.dueDate)}</td><td>{row.purchaseOrder || "N/A"}</td><td>{row.pickupNumber}</td><td><span className={`statement-status ${collectionStatus(row) === "VENCIDAS" ? "overdue" : ""}`}>{collectionStatus(row) === "VENCIDAS" ? `PAST DUE · ${agingLabel(row)}` : "CURRENT"}</span></td><td className="numeric">{money.format(row.total ?? 0)}</td></tr>)}</tbody><tfoot><tr><td colSpan={6}>TOTAL BALANCE DUE:</td><td className="numeric">{money.format(statementRows.reduce((sum, row) => sum + (row.total ?? 0), 0))}</td></tr></tfoot></table>
           {statementRows.length === 0 && <p className="statement-empty">This customer has no outstanding invoices.</p>}
-          <div className="statement-remit"><section><small>PLEASE REMIT PAYMENT TO:</small><strong>NORWEST PRODUCE LLC</strong><span>IBC BANK · Account 2516358520</span><span>Wire Routing 114902528</span></section><section><small>QUESTIONS ABOUT YOUR ACCOUNT?</small><strong>Please contact Norwest Produce LLC</strong><span>Please reference the invoice number with your payment.</span></section></div>
+          <div className="statement-remit"><section><small>PLEASE REMIT PAYMENT TO:</small><strong>BANKING INFORMATION:</strong><span>Bank: IBC BANK</span><span>Acc. Name: NORWEST PRODUCE LLC</span><span>Acc. Number: 2516358520</span><span>Wire Routing: 114902528</span></section><section><small>ADDRESS:</small><strong>1 S Broadway St.</strong><span>McAllen, Tx. 78501</span></section></div>
           <footer className="statement-footer"><span>Thank you for your business.</span><strong>{money.format(statementRows.reduce((sum, row) => sum + (row.total ?? 0), 0))} DUE</strong></footer>
         </article>
       </section></div>}

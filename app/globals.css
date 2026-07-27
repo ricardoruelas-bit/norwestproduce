@@ -332,6 +332,27 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
 @media(max-width:760px){.settings-form-grid{grid-template-columns:1fr}.settings-form-grid .span-2{grid-column:auto}.permissions-grid{grid-template-columns:1fr}.collections-filters{align-items:stretch}.collection-filter-buttons{display:grid;grid-template-columns:1fr 1fr}.collection-filter-buttons button{width:100%}.administration-layout,.admin-form-grid{grid-template-columns:1fr}.admin-form-grid .span-2{grid-column:auto}}
 
 @media(max-width:760px){.product-detail-list article{grid-template-columns:42px 1fr}.product-detail-edit{grid-column:1/-1}.product-detail-metrics{grid-template-columns:1fr 1fr}.product-detail-summary{flex-direction:column;gap:8px}}
+
+.invoice-number-button strong{color:var(--green-dark);font-weight:900;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+.report-selector-bar{display:flex;align-items:end;gap:14px}.report-print-button{height:42px;margin-bottom:0;white-space:nowrap}
+.product-detail-modal{width:min(980px,calc(100vw - 48px));overflow-x:hidden}.product-detail-modal .product-detail-list article{grid-template-columns:44px minmax(145px,.78fr) minmax(0,1.9fr);overflow:hidden}.product-detail-modal .product-detail-metrics{grid-template-columns:minmax(76px,.75fr) minmax(86px,.85fr) minmax(102px,.95fr) minmax(82px,.85fr) minmax(92px,.95fr);gap:8px}.product-detail-modal .product-detail-edit input{height:34px;padding:0 8px}.product-detail-modal .product-detail-edit>div strong{min-height:34px;padding:9px 0}.product-detail-modal .product-detail-summary{flex-wrap:wrap}
+.import-load-detail-modal{width:min(1040px,calc(100vw - 48px));overflow-x:hidden}.import-load-detail-table{max-height:none;overflow:visible}.import-load-detail-table table{width:100%;min-width:0!important;table-layout:fixed}.import-load-detail-table th,.import-load-detail-table td{padding:8px 7px;font-size:8px;white-space:normal;word-break:break-word}.import-load-detail-table th:nth-child(3),.import-load-detail-table td:nth-child(3){width:18%}.import-load-detail-table th:nth-child(6),.import-load-detail-table td:nth-child(6){width:18%}.import-load-detail-table .multi-product-button strong{font-size:8px}.import-load-detail-table .multi-product-button small{font-size:7px}
+.statement-remit section{gap:5px}.statement-remit small{font-size:9px}.statement-remit strong{color:var(--ink);font-size:12px}.statement-remit span{color:var(--ink);font-size:10px;font-weight:700}
+
+@media print{
+  .report-print-mode{width:8.5in!important;height:11in!important;overflow:hidden!important;background:#fff!important}
+  .report-print-mode .sidebar,.report-print-mode .topbar,.report-print-mode .summary-grid.report-summary,.report-print-mode .modal-backdrop{display:none!important}
+  .report-print-mode .erp-content{display:block!important;margin:0!important;padding:0!important;width:8.5in!important;height:11in!important;overflow:hidden!important}
+  .report-print-mode .reports-print-scope,.report-print-mode .reports-print-scope *{visibility:visible!important}
+  .report-print-mode .reports-print-scope{position:fixed!important;inset:.25in!important;width:8in!important;max-width:none!important;max-height:none!important;margin:0!important;overflow:visible!important;border:0!important;box-shadow:none!important;background:#fff!important}
+  .report-print-mode .report-filters,.report-print-mode .report-selector-bar,.report-print-mode .record-count,.report-print-mode .secondary-button{display:none!important}
+  .report-print-mode .panel-heading{padding:0 0 10px!important}
+  .report-print-mode .panel-heading h2{font-size:18px!important}.report-print-mode .panel-heading p{font-size:9px!important}
+  .report-print-mode .table-wrap{max-height:none!important;overflow:visible!important;border:0!important}
+  .report-print-mode .report-table table{width:100%!important;min-width:0!important;table-layout:fixed!important}
+  .report-print-mode .report-table th,.report-print-mode .report-table td{padding:5px 4px!important;font-size:7px!important;white-space:normal!important;word-break:break-word!important}
+  .report-print-mode .seller-detail-panel,.report-print-mode .report-group-section{margin:0 0 12px!important;padding:0!important;border:0!important;background:#fff!important}
+}
 @media(max-width:760px){.inventory-sale-detail-list article{grid-template-columns:1fr}.inventory-sale-detail-list article>div{grid-template-columns:42px 1fr}.selected-inventory-sale span{align-items:flex-start;flex-direction:column;gap:3px}.selected-inventory-sale-final article{grid-template-columns:42px 1fr}.selected-inventory-sale-final article>span{grid-column:1/-1}.import-cost-summary{align-items:stretch;flex-direction:column}.import-cost-summary span{text-align:left}}
 @media(max-width:760px){.import-quote-row-main,.import-quote-grid,.import-quote-result{grid-template-columns:1fr}.import-quote-row-main .sale-line-remove{justify-self:end}.import-quote-card{padding:12px}}
 @media(max-width:900px){.quote-sheet-body{grid-template-columns:1fr}.quote-sheet-left{border-right:0;border-bottom:1px solid #d7e4df}.quote-product-line,.quote-sheet-row{grid-template-columns:1fr}.import-quote-sheet{padding:0}.quote-sheet-results{grid-template-columns:1fr}}
