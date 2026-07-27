@@ -346,6 +346,7 @@ tbody tr:hover{background:#fbfdfc}td strong,td small{display:block}td strong{col
   .report-print-mode .reports-print-scope,.report-print-mode .reports-print-scope *{visibility:visible!important}
   .report-print-mode .reports-print-scope{position:fixed!important;inset:.25in!important;width:8in!important;max-width:none!important;max-height:none!important;margin:0!important;overflow:visible!important;border:0!important;box-shadow:none!important;background:#fff!important}
   .report-print-mode .report-filters,.report-print-mode .report-selector-bar,.report-print-mode .record-count,.report-print-mode .secondary-button{display:none!important}
+  .report-print-mode .edit-button{display:none!important}
   .report-print-mode .panel-heading{padding:0 0 10px!important}
   .report-print-mode .panel-heading h2{font-size:18px!important}.report-print-mode .panel-heading p{font-size:9px!important}
   .report-print-mode .table-wrap{max-height:none!important;overflow:visible!important;border:0!important}
