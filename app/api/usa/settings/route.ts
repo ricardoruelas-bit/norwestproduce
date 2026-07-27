@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { companySettings } from "../../../../db/schema";
+import { requirePermission } from "../../../../lib/api-auth";
 
 const defaults = {
   id: 1,
@@ -39,6 +40,9 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
+    const auth = await requirePermission(request, "settings");
+    if ("response" in auth) return auth.response;
+
     const payload = await request.json() as Record<string, unknown>;
     if (!clean(payload.legalName)) return Response.json({ error: "El nombre legal de la empresa es obligatorio." }, { status: 400 });
     const norwestProfitPercentage = Number(payload.norwestProfitPercentage ?? 16);

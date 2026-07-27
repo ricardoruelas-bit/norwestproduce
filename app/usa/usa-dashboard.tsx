@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, Fragment, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import type { BusinessPartner, ColdStorage, CompanySettings, InventoryLot, InvoiceAdjustment, InvoiceItem, PartnerType, Product, Sale, SellerLiquidation, UserAccount } from "../../lib/types";
+import { calculateSellerProfitAllocations, normalizeSellerName } from "../../lib/seller-profit";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const moneyMxn = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
@@ -1831,36 +1832,16 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   };
   const saleCostFor = (sale: Sale) => saleTotalFor(sale) - saleProfitFor(sale);
   const customerForSale = (sale: Sale) => partners.find((partner) => partner.partnerType === "CUSTOMER" && partner.name === sale.customer);
-  const sellerProfitPoolFor = (sale: Sale) => {
-    const norwestPercentage = Math.min(100, Math.max(0, Number(companyForm.norwestProfitPercentage || 16)));
-    return Math.max(0, saleProfitFor(sale) * ((100 - norwestPercentage) / 100));
-  };
-  const sellerNameFromAlias = (code: "RR" | "GM") => users.find((user) => user.alias.toLocaleUpperCase() === code || user.fullName.toLocaleUpperCase() === code)?.fullName || (code === "RR" ? "Ricardo Ruelas" : code);
-  const canonicalSellerName = (value: string | null | undefined) => {
-    const name = String(value || "").trim();
-    if (!name) return "Sin vendedor";
-    const upper = name.toLocaleUpperCase();
-    const aliasUser = users.find((user) => user.alias.toLocaleUpperCase() === upper);
-    if (aliasUser) return aliasUser.fullName;
-    if (upper === "RR") return sellerNameFromAlias("RR");
-    if (upper === "GM") return sellerNameFromAlias("GM");
-    return name;
-  };
-  const profitSellerName = (code: "RR" | "GM") => canonicalSellerName(code);
+  const canonicalSellerName = (value: string | null | undefined) => normalizeSellerName(value, users);
   const sellerProfitAllocationsFor = (sale: Sale) => {
     const customer = customerForSale(sale);
-    const distributableProfit = sellerProfitPoolFor(sale);
-    const assignedSeller = canonicalSellerName(sale.sellerName || customer?.assignedSeller);
-    const assignedPercentage = Math.min(100, Math.max(0, Number(customer?.profitPercentage || 0)));
-    const rrGmPercentage = (100 - assignedPercentage) / 2;
-    const allocations = [
-      { sellerName: assignedSeller, amount: distributableProfit * (assignedPercentage / 100) },
-      { sellerName: profitSellerName("RR"), amount: distributableProfit * (rrGmPercentage / 100) },
-      { sellerName: profitSellerName("GM"), amount: distributableProfit * (rrGmPercentage / 100) },
-    ];
-    const grouped = new Map<string, number>();
-    allocations.forEach((allocation) => grouped.set(allocation.sellerName, (grouped.get(allocation.sellerName) || 0) + allocation.amount));
-    return Array.from(grouped.entries()).map(([sellerName, amount]) => ({ sellerName, amount }));
+    return calculateSellerProfitAllocations({
+      saleProfit: saleProfitFor(sale),
+      norwestProfitPercentage: Number(companyForm.norwestProfitPercentage || 16),
+      assignedSeller: sale.sellerName || customer?.assignedSeller,
+      assignedSellerPercentage: Number(customer?.profitPercentage || 0),
+      sellers: users,
+    });
   };
   const sellerProfitFor = (sale: Sale, sellerName?: string) => {
     const allocations = sellerProfitAllocationsFor(sale);
@@ -2050,7 +2031,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     return Array.from(rows.values()).map((row) => ({ ...row, balance: row.sellerProfit - row.paid, saleCount: row.sales.length })).sort((a, b) => b.balance - a.balance);
   }, [salesRows, users, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
 
-  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), profitSellerName("RR"), profitSellerName("GM"), ...salesRows.flatMap((sale) => sellerProfitAllocationsFor(sale).map((allocation) => allocation.sellerName)), ...sellerLiquidations.map((item) => canonicalSellerName(item.sellerName))])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
+  const sellerOptions = useMemo(() => Array.from(new Set([...users.filter((user) => user.active).map((user) => user.fullName), canonicalSellerName("RR"), canonicalSellerName("GM"), ...salesRows.flatMap((sale) => sellerProfitAllocationsFor(sale).map((allocation) => allocation.sellerName)), ...sellerLiquidations.map((item) => canonicalSellerName(item.sellerName))])).sort((a, b) => a.localeCompare(b)), [users, salesRows, sellerLiquidations, partners, companyForm.norwestProfitPercentage]);
   const administrationTotals = useMemo(() => ({
     generated: administrationSellerRows.reduce((sum, row) => sum + row.sellerProfit, 0),
     paid: sellerLiquidations.reduce((sum, item) => sum + Number(item.amount || 0), 0),

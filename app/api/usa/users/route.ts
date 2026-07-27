@@ -1,6 +1,7 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { userAccounts } from "../../../../db/schema";
+import { requirePermission } from "../../../../lib/api-auth";
 import { ALL_USER_PERMISSIONS, DEFAULT_ADMIN_USER, clean, hashPassword, safeUser } from "../../../../lib/auth";
 
 const allowedPermissions = new Set<string>(ALL_USER_PERMISSIONS);
@@ -33,6 +34,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const auth = await requirePermission(request, "users");
+    if ("response" in auth) return auth.response;
+
     const payload = await request.json() as Record<string, unknown>;
     const fullName = clean(payload.fullName), alias = clean(payload.alias), email = clean(payload.email).toLowerCase(), password = clean(payload.password);
     if (!fullName || !alias || !email || password.length < 8) return Response.json({ error: "Completa nombre, alias, correo y una contraseña de al menos 8 caracteres." }, { status: 400 });
@@ -49,6 +53,9 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const auth = await requirePermission(request, "users");
+    if ("response" in auth) return auth.response;
+
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id), fullName = clean(payload.fullName), alias = clean(payload.alias), email = clean(payload.email).toLowerCase();
     const newPassword = clean(payload.newPassword), confirmNewPassword = clean(payload.confirmNewPassword);
