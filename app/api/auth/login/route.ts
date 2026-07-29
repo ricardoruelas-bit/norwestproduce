@@ -81,8 +81,7 @@ export async function POST(request: Request) {
     const permissions = user.permissions ? (JSON.parse(user.permissions) as string[]) : [];
     const token = await createSessionToken(email, permissions);
     return loginResponse(user, token);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return Response.json({ error: `No fue posible iniciar sesion. (${msg})` }, { status: 500 });
+  } catch {
+    return Response.json({ error: "No fue posible iniciar sesion." }, { status: 500 });
   }
 }
