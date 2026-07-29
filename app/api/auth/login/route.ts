@@ -54,6 +54,7 @@ export async function POST(request: Request) {
 
     let user: ReturnType<typeof safeUser> | null = null;
     let databaseUnavailable = false;
+    let databaseUserExists = false;
 
     try {
       const db = await getDb();
@@ -62,12 +63,14 @@ export async function POST(request: Request) {
         .from(userAccounts)
         .where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.email, email)))
         .limit(1);
+      databaseUserExists = Boolean(row);
       if (row?.active && (await verifyPassword(password, row.passwordHash))) user = safeUser(row);
     } catch {
       databaseUnavailable = true;
     }
 
-    if (databaseUnavailable && !user && email === DEFAULT_ADMIN_USER.email && (await verifyPassword(password, DEFAULT_ADMIN_USER.passwordHash))) {
+    const fallbackAllowed = databaseUnavailable || !databaseUserExists;
+    if (fallbackAllowed && !user && email === DEFAULT_ADMIN_USER.email && (await verifyPassword(password, DEFAULT_ADMIN_USER.passwordHash))) {
       user = safeUser(DEFAULT_ADMIN_USER);
     }
 
@@ -78,7 +81,8 @@ export async function POST(request: Request) {
     const permissions = user.permissions ? (JSON.parse(user.permissions) as string[]) : [];
     const token = await createSessionToken(email, permissions);
     return loginResponse(user, token);
-  } catch {
-    return Response.json({ error: "No fue posible iniciar sesion." }, { status: 500 });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return Response.json({ error: `No fue posible iniciar sesion. (${msg})` }, { status: 500 });
   }
 }
