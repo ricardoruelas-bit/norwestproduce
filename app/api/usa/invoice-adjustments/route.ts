@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { getDb } from "../../../../db";
+import { applyInventoryAdjustments, getDb } from "../../../../db";
 import { sales } from "../../../../db/schema";
 import type { InvoiceAdjustment, InvoiceItem } from "../../../../lib/types";
 import { requirePermission } from "../../../../lib/api-auth";
@@ -41,9 +41,25 @@ export async function POST(request: Request) {
     if (!existing?.invoiceNumber) return Response.json({ error: "La venta todavía no tiene una factura emitida." }, { status: 409 });
 
     const previousItems = parseItems(existing.invoiceItems);
-    const adjustedItems = payload.items.map((item) => {
+    // Bug 8 fix: preserve purchasePrice from previous items so profit stays correct
+    // on multi-item sales after an adjustment.
+    const adjustedItems = (payload.items as InvoiceItem[]).map((item) => {
       const row = item as InvoiceItem;
-      return { product: row.product.trim(), presentation: row.presentation?.trim() || "", size: row.size?.trim() || "", label: row.label?.trim() || "", quantity: Number(row.quantity), unitPrice: Number(row.unitPrice) };
+      const previousMatch = previousItems.find(
+        (p) => p.product === row.product.trim()
+          && (p.presentation || "") === (row.presentation?.trim() || "")
+          && (p.size || "") === (row.size?.trim() || "")
+          && (p.label || "") === (row.label?.trim() || ""),
+      );
+      return {
+        product: row.product.trim(),
+        presentation: row.presentation?.trim() || "",
+        size: row.size?.trim() || "",
+        label: row.label?.trim() || "",
+        quantity: Number(row.quantity),
+        unitPrice: Number(row.unitPrice),
+        purchasePrice: previousMatch?.purchasePrice ?? existing.purchasePrice ?? undefined,
+      };
     });
     const previousTotal = previousItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
     const adjustedTotal = adjustedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
@@ -63,7 +79,22 @@ export async function POST(request: Request) {
       documentType: difference < 0 ? "NOTA DE CREDITO" : difference > 0 ? "NOTA DE DEBITO" : "SIN CAMBIO",
     };
     const boxes = adjustedItems.reduce((sum, item) => sum + item.quantity, 0);
-    const profit = existing.purchasePrice == null ? null : adjustedTotal - existing.purchasePrice * boxes;
+    // Bug 8 fix: use per-item purchasePrice when available; fall back to sale-level cost.
+    const itemCostsKnown = adjustedItems.every((item) => Number.isFinite(Number(item.purchasePrice)));
+    const totalCost = itemCostsKnown
+      ? adjustedItems.reduce((sum, item) => sum + Number(item.purchasePrice) * item.quantity, 0)
+      : existing.purchasePrice == null ? null : existing.purchasePrice * boxes;
+    const profit = totalCost == null ? null : adjustedTotal - totalCost;
+
+    // Bug 9 fix: return freed boxes to the inventory lot when box count decreases,
+    // or reserve extra boxes if the adjustment increases the count.
+    if (existing.operationType === "IMPORTED_INVENTORY" && boxes !== existing.boxes) {
+      const delta = boxes - existing.boxes;
+      await applyInventoryAdjustments([{
+        inventoryLotId: existing.inventoryLotId!,
+        quantityDelta: -delta,
+      }]);
+    }
     const [sale] = await db.update(sales).set({
       originalInvoiceItems: existing.originalInvoiceItems || existing.invoiceItems,
       invoiceItems: JSON.stringify(adjustedItems),
