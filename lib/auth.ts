@@ -6,10 +6,10 @@ export const ALL_USER_PERMISSIONS = ["sales_view", "sales_edit", "inventory", "i
 export const DEFAULT_ADMIN_USER = {
   id: 1,
   organizationCode: "USA",
-  fullName: process.env.ADMIN_FULL_NAME ?? "Ricardo Ruelas",
+  fullName: process.env.ADMIN_FULL_NAME ?? "Admin",
   alias: "admin",
-  email: (process.env.ADMIN_EMAIL ?? "ricardoruelas@gmail.com").toLowerCase(),
-  passwordHash: process.env.ADMIN_PASSWORD_HASH ?? "pbkdf2-sha256$100000$oIaZOIWMdOdqF+mUjja3sg==$z/hFZbImLVFa1crshSJv/ugDQXgQDzJ0QoFdzdd/SQc=",
+  email: (process.env.ADMIN_EMAIL ?? "admin@norwestproduce.com").toLowerCase(),
+  passwordHash: process.env.ADMIN_PASSWORD_HASH ?? "",
   permissions: JSON.stringify(ALL_USER_PERMISSIONS),
   profitPercentage: 0,
   active: true,

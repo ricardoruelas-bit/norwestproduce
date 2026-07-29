@@ -40,4 +40,9 @@ tsconfig.tsbuildinfo
 /.wrangler/
 /.sites-runtime/
 /outputs/
+/output/
 /work/
+/tmp/
+/docs/
+/tests/
+/db/migrations/

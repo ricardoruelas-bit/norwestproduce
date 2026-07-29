@@ -26,6 +26,8 @@ function databaseUrl() {
 }
 
 async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
+  // All tables created with their final column set — no ALTER TABLE migrations needed.
+  // To add a new column in the future: add it here and deploy; Neon handles idempotency via IF NOT EXISTS.
   await sql`
     CREATE TABLE IF NOT EXISTS inventory_lots (
       id SERIAL PRIMARY KEY,
@@ -224,9 +226,32 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
     )
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS document_counters (
+      organization_code TEXT NOT NULL,
+      document_type TEXT NOT NULL,
+      last_value INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+      PRIMARY KEY (organization_code, document_type)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS auth_rate_limits (
+      rate_key TEXT PRIMARY KEY,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      reset_at BIGINT NOT NULL
+    )
+  `;
+
+  // CREATE TABLE IF NOT EXISTS does not add columns to an existing production table.
+  // Keep these upgrades idempotent until cold-start DDL is replaced by a migration job.
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS load_date TEXT`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS attachments TEXT NOT NULL DEFAULT '[]'`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS cost_attachments TEXT NOT NULL DEFAULT '{}'`;
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS cost_currencies TEXT NOT NULL DEFAULT '{}'`;
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION`;
+  await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS total_import_cost DOUBLE PRECISION`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS received_confirmed_at TEXT`;
   await sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS red_light_us_cost DOUBLE PRECISION NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE cold_storages ADD COLUMN IF NOT EXISTS state_code TEXT NOT NULL DEFAULT ''`;
@@ -244,18 +269,57 @@ async function initializeDatabase(sql: NeonQueryFunction<false, false>) {
   await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_office_extension TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE business_partners ADD COLUMN IF NOT EXISTS buyer_mobile_phone TEXT NOT NULL DEFAULT ''`;
 
-  await sql`CREATE INDEX IF NOT EXISTS inventory_org_product_idx ON inventory_lots (organization_code, product)`;
-  await sql`CREATE INDEX IF NOT EXISTS inventory_org_available_idx ON inventory_lots (organization_code, available_boxes)`;
-  await sql`CREATE INDEX IF NOT EXISTS cold_storage_org_name_idx ON cold_storages (organization_code, name)`;
-  await sql`CREATE INDEX IF NOT EXISTS products_org_name_idx ON products (organization_code, name)`;
-  await sql`CREATE INDEX IF NOT EXISTS sales_org_date_idx ON sales (organization_code, sale_date)`;
-  await sql`CREATE INDEX IF NOT EXISTS sales_org_pickup_idx ON sales (organization_code, pickup_number)`;
-  await sql`CREATE INDEX IF NOT EXISTS partners_org_type_name_idx ON business_partners (organization_code, partner_type, name)`;
-  await sql`CREATE INDEX IF NOT EXISTS partners_org_tax_id_idx ON business_partners (organization_code, tax_id)`;
-  await sql`CREATE INDEX IF NOT EXISTS users_org_alias_idx ON user_accounts (organization_code, alias)`;
-  await sql`CREATE INDEX IF NOT EXISTS users_org_email_idx ON user_accounts (organization_code, email)`;
-  await sql`CREATE INDEX IF NOT EXISTS seller_liquidations_org_seller_idx ON seller_liquidations (organization_code, seller_name)`;
-  await sql`CREATE INDEX IF NOT EXISTS seller_liquidations_org_date_idx ON seller_liquidations (organization_code, liquidation_date)`;
+  // Create all indexes in a single round-trip using a DO block
+  await sql`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'inventory_org_product_idx') THEN
+        CREATE INDEX inventory_org_product_idx ON inventory_lots (organization_code, product); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'inventory_org_available_idx') THEN
+        CREATE INDEX inventory_org_available_idx ON inventory_lots (organization_code, available_boxes); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'cold_storage_org_name_idx') THEN
+        CREATE INDEX cold_storage_org_name_idx ON cold_storages (organization_code, name); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'products_org_name_idx') THEN
+        CREATE INDEX products_org_name_idx ON products (organization_code, name); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'sales_org_date_idx') THEN
+        CREATE INDEX sales_org_date_idx ON sales (organization_code, sale_date); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'sales_org_pickup_idx') THEN
+        CREATE INDEX sales_org_pickup_idx ON sales (organization_code, pickup_number); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'partners_org_type_name_idx') THEN
+        CREATE INDEX partners_org_type_name_idx ON business_partners (organization_code, partner_type, name); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'partners_org_tax_id_idx') THEN
+        CREATE INDEX partners_org_tax_id_idx ON business_partners (organization_code, tax_id); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'users_org_alias_idx') THEN
+        CREATE INDEX users_org_alias_idx ON user_accounts (organization_code, alias); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'users_org_email_idx') THEN
+        CREATE INDEX users_org_email_idx ON user_accounts (organization_code, email); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'seller_liquidations_org_seller_idx') THEN
+        CREATE INDEX seller_liquidations_org_seller_idx ON seller_liquidations (organization_code, seller_name); END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'seller_liquidations_org_date_idx') THEN
+        CREATE INDEX seller_liquidations_org_date_idx ON seller_liquidations (organization_code, liquidation_date); END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'sales_org_invoice_unique_idx'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM sales
+        WHERE invoice_number IS NOT NULL
+        GROUP BY organization_code, invoice_number
+        HAVING COUNT(*) > 1
+      ) THEN
+        CREATE UNIQUE INDEX sales_org_invoice_unique_idx
+          ON sales (organization_code, invoice_number)
+          WHERE invoice_number IS NOT NULL;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'users_org_email_unique_idx'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM user_accounts
+        GROUP BY organization_code, lower(email)
+        HAVING COUNT(*) > 1
+      ) THEN
+        CREATE UNIQUE INDEX users_org_email_unique_idx
+          ON user_accounts (organization_code, lower(email));
+      END IF;
+    END $$
+  `;
 }
 
 export async function getDb() {
@@ -272,6 +336,97 @@ export async function getDb() {
   initialization ??= initializeDatabase(queryClient);
   await initialization;
   return database;
+}
+
+export async function nextInvoiceNumber(organizationCode: string) {
+  await getDb();
+  if (!queryClient) throw new Error("La base de datos no esta disponible.");
+
+  const rows = await queryClient`
+    INSERT INTO document_counters (organization_code, document_type, last_value, updated_at)
+    VALUES (
+      ${organizationCode},
+      'INVOICE',
+      GREATEST((
+        SELECT COALESCE(MAX(CAST(invoice_number AS INTEGER)), 0) + 1
+        FROM sales
+        WHERE organization_code = ${organizationCode}
+          AND invoice_number ~ '^[0-9]+$'
+      ), 1),
+      CURRENT_TIMESTAMP::text
+    )
+    ON CONFLICT (organization_code, document_type)
+    DO UPDATE SET
+      last_value = GREATEST(
+        document_counters.last_value + 1,
+        (
+          SELECT COALESCE(MAX(CAST(invoice_number AS INTEGER)), 0) + 1
+          FROM sales
+          WHERE organization_code = ${organizationCode}
+            AND invoice_number ~ '^[0-9]+$'
+        )
+      ),
+      updated_at = CURRENT_TIMESTAMP::text
+    RETURNING last_value
+  `;
+
+  const value = Number(rows[0]?.last_value);
+  if (!Number.isInteger(value) || value <= 0) throw new Error("No fue posible reservar el folio de factura.");
+  return String(value).padStart(4, "0");
+}
+
+export async function recordLoginAttempt(rateKey: string, windowMs: number, maxAttempts: number) {
+  await getDb();
+  if (!queryClient) throw new Error("La base de datos no esta disponible.");
+  const now = Date.now();
+  const resetAt = now + windowMs;
+  const rows = await queryClient`
+    INSERT INTO auth_rate_limits (rate_key, attempt_count, reset_at)
+    VALUES (${rateKey}, 1, ${resetAt})
+    ON CONFLICT (rate_key) DO UPDATE SET
+      attempt_count = CASE
+        WHEN auth_rate_limits.reset_at <= ${now} THEN 1
+        ELSE auth_rate_limits.attempt_count + 1
+      END,
+      reset_at = CASE
+        WHEN auth_rate_limits.reset_at <= ${now} THEN ${resetAt}
+        ELSE auth_rate_limits.reset_at
+      END
+    RETURNING attempt_count, reset_at
+  `;
+  const count = Number(rows[0]?.attempt_count);
+  return { allowed: Number.isInteger(count) && count <= maxAttempts, resetAt: Number(rows[0]?.reset_at) || resetAt };
+}
+
+export async function clearLoginAttempts(rateKey: string) {
+  await getDb();
+  if (!queryClient) return;
+  await queryClient`DELETE FROM auth_rate_limits WHERE rate_key = ${rateKey}`;
+}
+
+export async function applyInventoryAdjustments(
+  adjustments: Array<{ inventoryLotId: number; quantityDelta: number }>,
+) {
+  if (!adjustments.length) return;
+  await getDb();
+  if (!queryClient) throw new Error("La base de datos no esta disponible.");
+
+  await queryClient.transaction((transaction) => adjustments.map(({ inventoryLotId, quantityDelta }) => {
+    const requiredBoxes = Math.max(0, -quantityDelta);
+    return transaction`
+      WITH adjusted AS (
+        UPDATE inventory_lots
+        SET available_boxes = available_boxes + ${quantityDelta}
+        WHERE id = ${inventoryLotId}
+          AND organization_code = 'USA'
+          AND available_boxes >= ${requiredBoxes}
+        RETURNING id
+      )
+      SELECT id FROM adjusted
+      UNION ALL
+      SELECT 1 / COUNT(*)::integer FROM adjusted HAVING COUNT(*) = 0
+    `;
+  }));
 }
 
 export function getBucket() {

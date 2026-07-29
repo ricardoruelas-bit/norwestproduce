@@ -2,16 +2,23 @@ import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { businessPartners } from "../../../../db/schema";
 import type { NewBusinessPartner } from "../../../../lib/types";
+import { requireAnyPermission, requirePermission } from "../../../../lib/api-auth";
+import { clean } from "../../../../lib/auth";
 
 const requiredFields: Array<keyof NewBusinessPartner> = [
   "name", "stateCode", "stateName", "city", "postalCode", "contactName", "contactEmail", "contactPhone",
 ];
 
-function clean(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
+const MEXICAN_STATE_CODES = new Set([
+  "AGS","BC","BCS","CAMP","CHIS","CHIH","CDMX","COAH","COL","DGO","GTO","GRO",
+  "HGO","JAL","MEX","MICH","MOR","NAY","NL","OAX","PUE","QRO","QROO","SLP",
+  "SIN","SON","TAB","TAMS","TLAX","VER","YUC","ZAC",
+]);
 
-export async function GET() {
+
+export async function GET(request: Request) {
+  const guard = requireAnyPermission(request, ["catalogs", "sales_view", "sales_edit", "invoicing"]);
+  if (guard) return guard;
   try {
     const db = await getDb();
     const partners = await db.select().from(businessPartners)
@@ -24,16 +31,20 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const guard = requirePermission(request, "catalogs");
+  if (guard) return guard;
   try {
-    const payload = (await request.json()) as Partial<NewBusinessPartner> & { alsoOppositeType?: boolean };
+    const payload = (await request.json()) as Partial<NewBusinessPartner> & { alsoOppositeType?: boolean; isMexican?: boolean };
     const partnerType = payload.partnerType === "CUSTOMER" ? "CUSTOMER" : payload.partnerType === "SUPPLIER" ? "SUPPLIER" : null;
     if (!partnerType) return Response.json({ error: "Selecciona si el registro es proveedor o cliente." }, { status: 400 });
+    const isMexican = Boolean(payload.isMexican) || MEXICAN_STATE_CODES.has(clean(payload.stateCode ?? "").toUpperCase());
     const missing = requiredFields.some((field) => !clean(payload[field]));
     if (missing) return Response.json({ error: "Completa todos los campos obligatorios para continuar." }, { status: 400 });
     const email = clean(payload.contactEmail);
-    if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
     const phone = clean(payload.contactPhone).replace(/\D/g, "");
-    if (phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
+    if (!isMexican && phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
+    if (isMexican && phone.length < 7) return Response.json({ error: "Ingresa un teléfono válido." }, { status: 400 });
     if ((partnerType === "CUSTOMER" || payload.alsoOppositeType) && !clean(payload.assignedSeller)) return Response.json({ error: "Selecciona el vendedor de Norwest para el cliente." }, { status: 400 });
     const profitPercentage = Number(payload.profitPercentage ?? 0);
     if (!Number.isFinite(profitPercentage) || profitPercentage < 0 || profitPercentage > 100) return Response.json({ error: "El porcentaje de utilidad debe estar entre 0 y 100." }, { status: 400 });
@@ -79,17 +90,21 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const guard = requirePermission(request, "catalogs");
+  if (guard) return guard;
   try {
-    const payload = (await request.json()) as Partial<NewBusinessPartner> & { id?: number; alsoOppositeType?: boolean };
+    const payload = (await request.json()) as Partial<NewBusinessPartner> & { id?: number; alsoOppositeType?: boolean; isMexican?: boolean };
     const id = Number(payload.id);
     const partnerType = payload.partnerType === "CUSTOMER" ? "CUSTOMER" : payload.partnerType === "SUPPLIER" ? "SUPPLIER" : null;
     if (!Number.isInteger(id) || id <= 0 || !partnerType) return Response.json({ error: "No fue posible identificar el registro." }, { status: 400 });
+    const isMexican = Boolean(payload.isMexican) || MEXICAN_STATE_CODES.has(clean(payload.stateCode ?? "").toUpperCase());
     const missing = requiredFields.some((field) => !clean(payload[field]));
     if (missing) return Response.json({ error: "Completa todos los campos obligatorios para continuar." }, { status: 400 });
     const email = clean(payload.contactEmail);
-    if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
     const phone = clean(payload.contactPhone).replace(/\D/g, "");
-    if (phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
+    if (!isMexican && phone.length !== 10) return Response.json({ error: "El teléfono debe contener exactamente 10 dígitos." }, { status: 400 });
+    if (isMexican && phone.length < 7) return Response.json({ error: "Ingresa un teléfono válido." }, { status: 400 });
     if ((partnerType === "CUSTOMER" || payload.alsoOppositeType) && !clean(payload.assignedSeller)) return Response.json({ error: "Selecciona el vendedor de Norwest para el cliente." }, { status: 400 });
     const profitPercentage = Number(payload.profitPercentage ?? 0);
     if (!Number.isFinite(profitPercentage) || profitPercentage < 0 || profitPercentage > 100) return Response.json({ error: "El porcentaje de utilidad debe estar entre 0 y 100." }, { status: 400 });

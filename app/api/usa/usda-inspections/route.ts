@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getBucket, getDb } from "../../../../db";
 import { sales } from "../../../../db/schema";
+import { requireAnyPermission, requirePermission } from "../../../../lib/api-auth";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
@@ -10,6 +11,8 @@ function safeDownloadName(value: string) {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "sales_edit");
+  if (denied) return denied;
   let uploadedKey: string | null = null;
   try {
     const formData = await request.formData();
@@ -63,6 +66,8 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const denied = requireAnyPermission(request, ["sales_view", "sales_edit"]);
+  if (denied) return denied;
   try {
     const saleId = Number(new URL(request.url).searchParams.get("saleId"));
     if (!Number.isInteger(saleId) || saleId <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });

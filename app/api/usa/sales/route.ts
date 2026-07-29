@@ -1,9 +1,11 @@
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
-import { getDb } from "../../../../db";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { applyInventoryAdjustments, getDb } from "../../../../db";
 import { inventoryLots, sales } from "../../../../db/schema";
+import { requireAnyPermission, requirePermission } from "../../../../lib/api-auth";
+import { groupInventoryAllocations, inventoryAllocationDelta, type InventoryAllocation } from "../../../../lib/inventory-allocations";
 import type { InvoiceItem, NewSale } from "../../../../lib/types";
 
-const LOAD_STATUSES = new Set(["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"]);
+const LOAD_STATUSES = new Set(["OK", "PAS", "POSIBLE AJUSTE", "USDA REQUESTED"]);
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "No fue posible completar la operación.";
@@ -32,14 +34,43 @@ function inventoryAllocationsFor(row: { operationType: string; inventoryLotId?: 
   return row.inventoryLotId ? [{ inventoryLotId: row.inventoryLotId, quantity: row.boxes }] : [];
 }
 
-function localDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+type Database = Awaited<ReturnType<typeof getDb>>;
+
+async function restoreInventory(db: Database, allocations: InventoryAllocation[]) {
+  void db;
+  await applyInventoryAdjustments(groupInventoryAllocations(allocations).map((allocation) => ({
+    inventoryLotId: allocation.inventoryLotId,
+    quantityDelta: allocation.quantity,
+  })));
 }
 
-export async function GET() {
+async function reserveInventory(db: Database, allocations: InventoryAllocation[]) {
+  void db;
+  try {
+    await applyInventoryAdjustments(groupInventoryAllocations(allocations).map((allocation) => ({
+      inventoryLotId: allocation.inventoryLotId,
+      quantityDelta: -allocation.quantity,
+    })));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function localDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+export async function GET(request: Request) {
+  const denied = requireAnyPermission(request, ["sales_view", "sales_edit", "invoicing", "collections", "reports"]);
+  if (denied) return denied;
   try {
     const db = await getDb();
     const rows = await db
@@ -53,7 +84,11 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  const permissions = JSON.parse(request.headers.get("x-session-permissions") ?? "[]") as string[];
+  if (!permissions.includes("administration")) {
+    return Response.json({ error: "No tienes permiso para esta acción." }, { status: 403 });
+  }
   try {
     const db = await getDb();
     const existingSales = await db
@@ -78,6 +113,8 @@ export async function DELETE() {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "sales_edit");
+  if (denied) return denied;
   try {
     const db = await getDb();
     const payload = (await request.json()) as Partial<NewSale> & { items?: InvoiceItem[] };
@@ -106,14 +143,14 @@ export async function POST(request: Request) {
       if (requestedItems.length > 25 || requestedItems.some((item) => !Number.isInteger(item.inventoryLotId) || item.inventoryLotId <= 0 || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) {
         return Response.json({ error: "Revisa productos, bultos/cajas y precio de venta del inventario." }, { status: 400 });
       }
+      const lotIds = requestedItems.map((item) => item.inventoryLotId);
+      const fetchedLots = await db.select().from(inventoryLots)
+        .where(and(eq(inventoryLots.organizationCode, "USA"), inArray(inventoryLots.id, lotIds)));
+      const lotById = new Map(fetchedLots.map((lot) => [lot.id, lot]));
       const importedItems: InvoiceItem[] = [];
       for (const item of requestedItems) {
-        const [lot] = await db.select().from(inventoryLots).where(and(
-          eq(inventoryLots.id, item.inventoryLotId),
-          eq(inventoryLots.organizationCode, "USA"),
-          gte(inventoryLots.availableBoxes, item.quantity),
-        )).limit(1);
-        if (!lot) return Response.json({ error: "Una partida seleccionada ya no tiene suficientes cajas disponibles." }, { status: 409 });
+        const lot = lotById.get(item.inventoryLotId);
+        if (!lot || lot.availableBoxes < item.quantity) return Response.json({ error: "Una partida seleccionada ya no tiene suficientes cajas disponibles." }, { status: 409 });
         importedItems.push({
           inventoryLotId: lot.id,
           product: lot.product,
@@ -162,7 +199,18 @@ export async function POST(request: Request) {
     }
     const profit = lineItems.length ? lineItems.reduce((sum, item) => sum + (item.unitPrice - Number(item.purchasePrice ?? 0)) * item.quantity, 0) : total == null || purchasePrice == null ? null : (salePrice! - purchasePrice) * boxes;
     const primary = lineItems[0];
-    const [created] = await db.insert(sales).values({
+    const allocations = operationType === "IMPORTED_INVENTORY"
+      ? lineItems.some((item) => item.inventoryLotId)
+        ? lineItems.filter((item) => item.inventoryLotId).map((item) => ({ inventoryLotId: item.inventoryLotId!, quantity: item.quantity }))
+        : inventoryLotId ? [{ inventoryLotId, quantity: boxes }] : []
+      : [];
+    if (allocations.length && !(await reserveInventory(db, allocations))) {
+      return Response.json({ error: "El inventario cambio mientras se guardaba. Revisa las cajas disponibles e intenta nuevamente." }, { status: 409 });
+    }
+
+    let created: typeof sales.$inferSelect | undefined;
+    try {
+      [created] = await db.insert(sales).values({
       organizationCode: "USA",
       operationType,
       supplier: payload.supplier?.trim() || null,
@@ -190,18 +238,10 @@ export async function POST(request: Request) {
       paymentStatus: "PENDIENTE",
       invoiceNumber: payload.invoiceNumber?.trim() || null,
       invoiceItems: lineItems.length ? JSON.stringify(lineItems) : null,
-    }).returning();
-    if (operationType === "IMPORTED_INVENTORY" && lineItems.some((item) => item.inventoryLotId)) {
-      for (const item of lineItems) {
-        if (!item.inventoryLotId) continue;
-        await db.update(inventoryLots)
-          .set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${item.quantity}` })
-          .where(and(eq(inventoryLots.id, item.inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, item.quantity)));
-      }
-    } else if (inventoryLotId) {
-      await db.update(inventoryLots)
-        .set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${boxes}` })
-        .where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, boxes)));
+      }).returning();
+    } catch (error) {
+      if (allocations.length) await restoreInventory(db, allocations).catch(() => undefined);
+      throw error;
     }
     return Response.json({ sale: created }, { status: 201 });
   } catch (error) {
@@ -210,6 +250,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const denied = requirePermission(request, "sales_edit");
+  if (denied) return denied;
   try {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id);
@@ -228,11 +270,15 @@ export async function PATCH(request: Request) {
       if (existing.invoiceNumber) return Response.json({ error: "Una venta facturada no puede eliminarse. Utiliza Crear ajuste desde la factura." }, { status: 409 });
       const canceledAt = new Date().toISOString();
       const [sale] = await db.update(sales).set({ canceledAt, canceledBy, cancellationReason, cancellationDetail: cancellationReason })
-        .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.canceledAt))).returning();
+        .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.canceledAt), isNull(sales.invoiceNumber))).returning();
       if (!sale) return Response.json({ error: "La venta ya fue cancelada." }, { status: 409 });
-      for (const allocation of inventoryAllocationsFor(existing)) {
-        await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${allocation.quantity}` })
-          .where(and(eq(inventoryLots.id, allocation.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
+      try {
+        await restoreInventory(db, inventoryAllocationsFor(existing));
+      } catch (error) {
+        await db.update(sales).set({ canceledAt: null, canceledBy: null, cancellationReason: null, cancellationDetail: null })
+          .where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), eq(sales.canceledAt, canceledAt)))
+          .catch(() => undefined);
+        throw error;
       }
       return Response.json({ sale });
     }
@@ -273,13 +319,19 @@ export async function PATCH(request: Request) {
         if (requestedItems.length > 25 || requestedItems.some((item) => !Number.isInteger(item.inventoryLotId) || item.inventoryLotId <= 0 || !Number.isInteger(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) {
           return Response.json({ error: "Revisa productos, bultos/cajas y precio de venta del inventario." }, { status: 400 });
         }
-        const oldByLot = oldAllocations.reduce((map, item) => map.set(item.inventoryLotId, (map.get(item.inventoryLotId) || 0) + item.quantity), new Map<number, number>());
+        const oldByLot = new Map(groupInventoryAllocations(oldAllocations).map((item) => [item.inventoryLotId, item.quantity]));
+        const requestedByLot = new Map(groupInventoryAllocations(requestedItems).map((item) => [item.inventoryLotId, item.quantity]));
+        const editLotIds = requestedItems.map((item) => item.inventoryLotId);
+        const editFetchedLots = await db.select().from(inventoryLots)
+          .where(and(eq(inventoryLots.organizationCode, "USA"), inArray(inventoryLots.id, editLotIds)));
+        const editLotById = new Map(editFetchedLots.map((lot) => [lot.id, lot]));
         const importedItems: InvoiceItem[] = [];
         for (const item of requestedItems) {
-          const [lot] = await db.select().from(inventoryLots).where(and(eq(inventoryLots.id, item.inventoryLotId), eq(inventoryLots.organizationCode, "USA"))).limit(1);
-          if (!lot) return Response.json({ error: "No se encontrÃ³ una partida de inventario seleccionada." }, { status: 404 });
+          const lot = editLotById.get(item.inventoryLotId);
+          if (!lot) return Response.json({ error: "No se encontró una partida de inventario seleccionada." }, { status: 404 });
           const usableBoxes = lot.availableBoxes + (oldByLot.get(lot.id) || 0);
-          if (usableBoxes < item.quantity) return Response.json({ error: `La partida ${lot.pickupNumber || lot.product} sÃ³lo tiene ${usableBoxes} cajas disponibles para esta venta.` }, { status: 409 });
+          const requestedBoxes = requestedByLot.get(lot.id) || 0;
+          if (usableBoxes < requestedBoxes) return Response.json({ error: `La partida ${lot.pickupNumber || lot.product} sólo tiene ${usableBoxes} cajas disponibles para esta venta.` }, { status: 409 });
           importedItems.push({
             inventoryLotId: lot.id,
             product: lot.product,
@@ -325,32 +377,31 @@ export async function PATCH(request: Request) {
         payload.size = text(payload.size) || lot.size || "";
         payload.label = text(payload.label) || lot.label || "";
 
-        if (existing.inventoryLotId === inventoryLotId) {
-          await db.update(inventoryLots).set({ availableBoxes: usableBoxes - boxes }).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
-        } else {
-          await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${boxes}` }).where(and(eq(inventoryLots.id, inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, boxes)));
-          if (existing.inventoryLotId) {
-            await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${existing.boxes}` }).where(and(eq(inventoryLots.id, existing.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
-          }
-        }
-      }
-      if (operationType === "IMPORTED_INVENTORY" && lineItems.some((item) => item.inventoryLotId)) {
-        for (const allocation of oldAllocations) {
-          await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} + ${allocation.quantity}` })
-            .where(and(eq(inventoryLots.id, allocation.inventoryLotId), eq(inventoryLots.organizationCode, "USA")));
-        }
-        for (const item of lineItems) {
-          if (!item.inventoryLotId) continue;
-          await db.update(inventoryLots).set({ availableBoxes: sql`${inventoryLots.availableBoxes} - ${item.quantity}` })
-            .where(and(eq(inventoryLots.id, item.inventoryLotId), eq(inventoryLots.organizationCode, "USA"), gte(inventoryLots.availableBoxes, item.quantity)));
-        }
       }
 
       const total = lineItems.length ? lineItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) : boxes * salePrice;
       const profit = lineItems.length ? lineItems.reduce((sum, item) => sum + (item.unitPrice - Number(item.purchasePrice ?? 0)) * item.quantity, 0) : purchasePrice == null ? null : (salePrice - purchasePrice) * boxes;
       const primary = lineItems[0];
       const dueDate = pickupDate ? new Date(new Date(`${pickupDate}T00:00:00Z`).getTime() + 21 * 86400000).toISOString().slice(0, 10) : null;
-      const [sale] = await db.update(sales).set({
+      const newAllocations = operationType === "IMPORTED_INVENTORY"
+        ? lineItems.some((item) => item.inventoryLotId)
+          ? lineItems.filter((item) => item.inventoryLotId).map((item) => ({ inventoryLotId: item.inventoryLotId!, quantity: item.quantity }))
+          : inventoryLotId ? [{ inventoryLotId, quantity: boxes }] : []
+        : [];
+      const allocationDelta = inventoryAllocationDelta(oldAllocations, newAllocations);
+      const inventoryChanges = [
+        ...allocationDelta.reserve.map((allocation) => ({ inventoryLotId: allocation.inventoryLotId, quantityDelta: -allocation.quantity })),
+        ...allocationDelta.release.map((allocation) => ({ inventoryLotId: allocation.inventoryLotId, quantityDelta: allocation.quantity })),
+      ];
+      try {
+        await applyInventoryAdjustments(inventoryChanges);
+      } catch {
+        return Response.json({ error: "El inventario cambió mientras se actualizaba. Revisa las cajas disponibles e intenta nuevamente." }, { status: 409 });
+      }
+
+      let sale: typeof sales.$inferSelect | undefined;
+      try {
+        [sale] = await db.update(sales).set({
         supplier: text(payload.supplier) || null,
         inventoryLotId,
         saleDate,
@@ -373,8 +424,21 @@ export async function PATCH(request: Request) {
         total,
         dueDate,
         invoiceItems: lineItems.length ? JSON.stringify(lineItems) : null,
-      }).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.invoiceNumber))).returning();
-      if (!sale) return Response.json({ error: "La venta fue facturada mientras se editaba y ya no puede modificarse." }, { status: 409 });
+        }).where(and(eq(sales.id, id), eq(sales.organizationCode, "USA"), isNull(sales.invoiceNumber))).returning();
+      } catch (error) {
+        await applyInventoryAdjustments(inventoryChanges.map((change) => ({
+          inventoryLotId: change.inventoryLotId,
+          quantityDelta: -change.quantityDelta,
+        }))).catch(() => undefined);
+        throw error;
+      }
+      if (!sale) {
+        await applyInventoryAdjustments(inventoryChanges.map((change) => ({
+          inventoryLotId: change.inventoryLotId,
+          quantityDelta: -change.quantityDelta,
+        }))).catch(() => undefined);
+        return Response.json({ error: "La venta fue facturada mientras se editaba y ya no puede modificarse." }, { status: 409 });
+      }
       return Response.json({ sale });
     }
     if (Array.isArray(payload.items)) {

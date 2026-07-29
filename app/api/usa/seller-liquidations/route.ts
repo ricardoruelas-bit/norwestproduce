@@ -2,15 +2,12 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { sellerLiquidations } from "../../../../db/schema";
 import { requireAnyPermission, requirePermission } from "../../../../lib/api-auth";
-
-function clean(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
+import { clean } from "../../../../lib/auth";
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireAnyPermission(request, ["administration", "reports"]);
-    if ("response" in auth) return auth.response;
+    const guard = requireAnyPermission(request, ["administration", "reports"]);
+    if (guard) return guard;
 
     const db = await getDb();
     const liquidations = await db
@@ -26,8 +23,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const auth = await requirePermission(request, "administration");
-    if ("response" in auth) return auth.response;
+    const denied = requirePermission(request, "administration");
+    if (denied) return denied;
 
     const payload = await request.json() as Record<string, unknown>;
     const sellerName = clean(payload.sellerName);

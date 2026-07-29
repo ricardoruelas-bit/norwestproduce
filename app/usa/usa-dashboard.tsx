@@ -22,7 +22,7 @@ type CollectionFilter = "TODAS" | "VIGENTES" | "VENCIDAS" | "PAGADAS";
 type ReportTab = "sales" | "inventory" | "collections" | "profit" | "importProfit" | "sellerProfit" | "salesByCustomer" | "salesDetailCustomer" | "salesBySeller" | "salesDetailSeller" | "salesByProduct" | "salesDetailProduct" | "salesByImportInvoice" | "salesDetailImportInvoice" | "adjustments";
 type CatalogType = PartnerType | "WAREHOUSE" | "PRODUCT";
 type StateOption = { code: string; name: string };
-type LoadStatus = "OK" | "PAS" | "AJUSTE POR MERCADO" | "AJUSTE POR CALIDAD" | "USDA REQUESTED";
+type LoadStatus = "OK" | "PAS" | "POSIBLE AJUSTE" | "USDA REQUESTED";
 type InventoryEntryItem = { product: string; presentation: string; size: string; label: string; totalBoxes: string; boxesPerPallet: string; purchasePrice: string; purchaseCurrency: Currency };
 type InventoryLoadGroup = { key: string; lots: InventoryLot[]; first: InventoryLot; totalBoxes: number; availableBoxes: number; allReceived: boolean };
 type InventorySaleDraftItem = { lot: InventoryLot; boxes: string; salePrice: string };
@@ -35,7 +35,7 @@ type ImportQuoteProductNumberField = "weight" | "pallets" | "boxes" | "boxesPerP
 type ImportQuoteExpenseNumberField = "freightMxn" | "mexicoCostsMxn" | "usCostsUsd" | "inspectionUsd" | "coldStorageUsd" | "overweightMxn" | "otherCostsUsd" | "exchangeRate";
 type ImportQuoteNumberField = ImportQuoteProductNumberField | ImportQuoteExpenseNumberField;
 const importQuoteIntegerFields = new Set<ImportQuoteNumberField>(["pallets", "boxes", "boxesPerPallet"]);
-const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "AJUSTE POR MERCADO", "AJUSTE POR CALIDAD", "USDA REQUESTED"];
+const LOAD_STATUS_OPTIONS: LoadStatus[] = ["OK", "PAS", "POSIBLE AJUSTE", "USDA REQUESTED"];
 
 function localDateKey(date = new Date()) {
   const year = date.getFullYear();
@@ -243,9 +243,23 @@ const blankSale = {
   shipTo: "",
 };
 
+const MEXICAN_STATES = [
+  { code: "AGS", name: "Aguascalientes" }, { code: "BC", name: "Baja California" }, { code: "BCS", name: "Baja California Sur" },
+  { code: "CAMP", name: "Campeche" }, { code: "CHIS", name: "Chiapas" }, { code: "CHIH", name: "Chihuahua" },
+  { code: "CDMX", name: "Ciudad de México" }, { code: "COAH", name: "Coahuila" }, { code: "COL", name: "Colima" },
+  { code: "DGO", name: "Durango" }, { code: "GTO", name: "Guanajuato" }, { code: "GRO", name: "Guerrero" },
+  { code: "HGO", name: "Hidalgo" }, { code: "JAL", name: "Jalisco" }, { code: "MEX", name: "Estado de México" },
+  { code: "MICH", name: "Michoacán" }, { code: "MOR", name: "Morelos" }, { code: "NAY", name: "Nayarit" },
+  { code: "NL", name: "Nuevo León" }, { code: "OAX", name: "Oaxaca" }, { code: "PUE", name: "Puebla" },
+  { code: "QRO", name: "Querétaro" }, { code: "QROO", name: "Quintana Roo" }, { code: "SLP", name: "San Luis Potosí" },
+  { code: "SIN", name: "Sinaloa" }, { code: "SON", name: "Sonora" }, { code: "TAB", name: "Tabasco" },
+  { code: "TAMS", name: "Tamaulipas" }, { code: "TLAX", name: "Tlaxcala" }, { code: "VER", name: "Veracruz" },
+  { code: "YUC", name: "Yucatán" }, { code: "ZAC", name: "Zacatecas" },
+];
+
 const blankPartner = {
   partnerType: "SUPPLIER" as PartnerType, name: "", pacaNumber: "", taxId: "", blueBookNumber: "", dunsNumber: "",
-  street: "", exteriorNumber: "", interiorNumber: "", stateCode: "", stateName: "", city: "", postalCode: "",
+  street: "", exteriorNumber: "", interiorNumber: "", colonia: "", stateCode: "", stateName: "", city: "", postalCode: "",
   contactName: "", contactEmail: "", contactPhone: "", assignedSeller: "", profitPercentage: "0",
   buyerName: "", buyerEmail: "", buyerOfficePhone: "", buyerOfficeExtension: "", buyerMobilePhone: "",
 };
@@ -330,6 +344,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
   const [partnerForm, setPartnerForm] = useState(blankPartner);
   const [partnerSaveState, setPartnerSaveState] = useState("");
   const [alsoOppositeType, setAlsoOppositeType] = useState(false);
+  const [isMexicanPartner, setIsMexicanPartner] = useState(false);
   const [states, setStates] = useState<StateOption[]>([]);
   const [cities, setCities] = useState<string[]>([]);
   const [citiesLoading, setCitiesLoading] = useState(false);
@@ -620,6 +635,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setEditingPartnerId(null);
     setPartnerForm({ ...blankPartner, partnerType: type });
     setAlsoOppositeType(false);
+    setIsMexicanPartner(false);
     setPartnerSaveState("");
     setCities([]);
     setPartnerModal(type);
@@ -641,7 +657,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     setEditingPartnerId(partner.id);
     setPartnerForm({
       partnerType: partner.partnerType, name: partner.name, pacaNumber: partner.pacaNumber || "", taxId: partner.taxId || "", blueBookNumber: partner.blueBookNumber || "", dunsNumber: partner.dunsNumber || "",
-      street: partner.street || "", exteriorNumber: partner.exteriorNumber || "", interiorNumber: partner.interiorNumber || "", stateCode: partner.stateCode, stateName: partner.stateName,
+      street: partner.street || "", exteriorNumber: partner.exteriorNumber || "", interiorNumber: partner.interiorNumber || "", colonia: "", stateCode: partner.stateCode, stateName: partner.stateName,
       city: partner.city, postalCode: partner.postalCode, contactName: partner.contactName, contactEmail: partner.contactEmail, contactPhone: partner.contactPhone,
       assignedSeller: partner.assignedSeller || "",
       profitPercentage: String(partner.profitPercentage || 0),
@@ -649,6 +665,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     });
     const oppositeType = partner.partnerType === "SUPPLIER" ? "CUSTOMER" : "SUPPLIER";
     setAlsoOppositeType(partners.some((item) => item.partnerType === oppositeType && item.name === partner.name));
+    setIsMexicanPartner(MEXICAN_STATES.some((s) => s.code === partner.stateCode));
     setPartnerSaveState("");
     setPartnerModal(partner.partnerType);
     if (partner.partnerType === "CUSTOMER" && !users.length) {
@@ -689,7 +706,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
     event.preventDefault();
     setPartnerSaveState("Guardando…");
     try {
-      const response = await fetch("/api/usa/partners", { method: editingPartnerId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...partnerForm, id: editingPartnerId, alsoOppositeType }) });
+      const response = await fetch("/api/usa/partners", { method: editingPartnerId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...partnerForm, id: editingPartnerId, alsoOppositeType, isMexican: isMexicanPartner }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
       setPartners((current) => {
@@ -2054,11 +2071,6 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
 
   const inventoryItemsTotalBoxes = useMemo(() => inventoryItems.reduce((sum, item) => sum + (Number(item.totalBoxes) || 0), 0), [inventoryItems]);
 
-  useEffect(() => {
-    const totalBoxes = inventoryItemsTotalBoxes ? String(inventoryItemsTotalBoxes) : "";
-    setInventoryForm((current) => current.totalBoxes === totalBoxes ? current : { ...current, totalBoxes });
-  }, [inventoryItemsTotalBoxes]);
-
   const inventoryCostSummary = useMemo(() => {
     const boxes = inventoryItemsTotalBoxes;
     const rate = Number(inventoryForm.exchangeRate) || 0;
@@ -2236,7 +2248,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       <aside className="sidebar">
         <div className="sidebar-brand"><img className="sidebar-logo" src="/norwest-logo.jpg" alt="Norwest Produce" /></div>
         <nav>
-          <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Resumen</button>
+          <button className={`nav-item ${section === "dashboard" ? "active" : ""}`} onClick={() => setSection("dashboard")}><span>▦</span> Inicio</button>
           <button className={`nav-item ${section === "inventory" ? "active" : ""}`} onClick={() => void openInventorySection()}><span>▤</span> Inventario importado</button>
           <button className={`nav-item ${section === "importQuote" ? "active" : ""}`} onClick={() => setSection("importQuote")}><span>$</span> Cotización para Importar</button>
           <button className={`nav-item ${section === "invoicing" ? "active" : ""}`} onClick={() => openInvoicing()}><span>□</span> Facturación</button><button className={`nav-item ${section === "collections" ? "active" : ""}`} onClick={() => { setSection("collections"); void loadPartners(); }}><span>◎</span> Cartera</button><button className={`nav-item ${section === "catalogs" ? "active" : ""}`} onClick={() => void openCatalogs()}><span>◇</span> Catálogos</button><button className={`nav-item ${section === "reports" ? "active" : ""}`} onClick={openReports}><span>⌁</span> Reportes</button><button className={`nav-item ${section === "administration" ? "active" : ""}`} onClick={openAdministration}><span>▣</span> Administración</button><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={openSettings}><span>⚙</span> Configuración</button>
@@ -2262,7 +2274,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
             <details className="filter-multiselect"><summary>{statusFilters.includes("TODOS") ? "TODOS LOS ESTATUS" : statusFilters.length === 1 ? statusFilters[0] : `${statusFilters.length} ESTATUS`}</summary><div className="filter-options">{["TODOS", ...LOAD_STATUS_OPTIONS, "SIN FACTURA", "CANCELADAS"].map((option) => <label key={option}><input type="checkbox" checked={statusFilters.includes(option)} onChange={() => toggleFilter(option, "TODOS", statusFilters, setStatusFilters)} /><span>{option === "TODOS" ? "Todos los estatus" : option}</span></label>)}</div></details>
             <details className="filter-multiselect"><summary>{operationFilters.includes("TODAS") ? "TODAS LAS OPERACIONES" : operationFilters.length === 1 ? (operationFilters[0] === "DIRECT_RESALE" ? "COMPRA Y REVENTA" : "INVENTARIO IMPORTADO") : `${operationFilters.length} OPERACIONES`}</summary><div className="filter-options">{[["TODAS", "Todas las operaciones"], ["DIRECT_RESALE", "Compra y reventa"], ["IMPORTED_INVENTORY", "Inventario importado"]].map(([value, label]) => <label key={value}><input type="checkbox" checked={operationFilters.includes(value)} onChange={() => toggleFilter(value, "TODAS", operationFilters, setOperationFilters)} /><span>{label}</span></label>)}</div></details>
           </div>
-          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th>Estatus</th><th>Factura</th><th>Edit</th></tr></thead>
+          <div className="table-wrap"><table className="sales-table"><thead><tr><th>Fecha</th><th>Operación</th><th>Cliente</th><th>PO #</th><th>Pickup #</th><th>Bodega</th><th>Día de pickup</th><th>Producto</th><th className="numeric">Cajas</th><th className="numeric">Precio</th><th className="numeric">Total</th><th style={{width:"7rem"}}>STATUS</th><th>Factura</th><th>Edit</th></tr></thead>
             <tbody>{filtered.map((row, index) => { return <tr className={saleRowClass(row)} key={row.id ?? `${row.sourceRow}-${index}`}>
               <td className="date-cell">{formatDate(row.saleDate)}</td><td><span className={`operation-tag ${row.operationType === "IMPORTED_INVENTORY" ? "inventory" : "resale"}`}>{row.operationType === "IMPORTED_INVENTORY" ? "Inventario" : "Reventa"}</span></td>
               <td><strong>{row.customer}</strong></td><td>{row.purchaseOrder || "N/A"}</td><td><button type="button" className="pickup-number-button" onClick={() => openSocPreview(row)}>{row.pickupNumber}</button></td><td>{row.warehouse}</td><td className="date-cell"><input disabled={Boolean(row.canceledAt)} className="pickup-date-input" aria-label={`Cambiar día de pickup de ${row.customer}`} min={localDateKey()} type="date" value={row.pickupDate || ""} onChange={(e) => void updatePickupDate(row, e.target.value)} />{row.pickupDate === localDateKey() && <small>Pickup hoy</small>}</td>
@@ -2309,7 +2321,7 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
         </section> : <section className="sales-panel catalog-panel">
           <div className="panel-heading"><div><h2>{partnerTypeFilter === "SUPPLIER" ? "Proveedores" : "Clientes"}</h2><p>Catálogo exclusivo de la operación USA</p></div><button className="primary-button" onClick={() => void openPartnerForm(partnerTypeFilter)}>＋ Alta de {partnerTypeFilter === "SUPPLIER" ? "proveedor" : "cliente"}</button></div>
           <div className="table-wrap catalog-table"><table><thead><tr><th>Nombre</th><th>PACA #</th><th>TAX ID #</th><th>Blue Book #</th><th>DUNS & Bradstreet #</th><th>Direcci??n</th>{partnerTypeFilter === "CUSTOMER" && <th>Comprador</th>}<th>{partnerTypeFilter === "SUPPLIER" ? "Contacto para pagos" : "Contacto para cobros"}</th><th></th></tr></thead>
-            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong></td><td>{partner.pacaNumber || "Pendiente"}</td><td>{partner.taxId || "Pendiente"}</td><td>{partner.blueBookNumber || "Pendiente"}</td><td>{partner.dunsNumber || "Pendiente"}</td><td><strong>{[partner.street, partner.exteriorNumber && `#${partner.exteriorNumber}`, partner.interiorNumber && `Int. ${partner.interiorNumber}`].filter(Boolean).join(" ") || "Pendiente"}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td>{partnerTypeFilter === "CUSTOMER" && <td><strong>{partner.buyerName || "Pendiente"}</strong><small>{partner.buyerEmail || ""}{partner.buyerOfficePhone ? ` ?? ${formatPhone(partner.buyerOfficePhone)}` : ""}</small></td>}<td><strong>{partner.contactName}</strong><small>{partner.contactEmail} ?? {formatPhone(partner.contactPhone)}</small></td><td><button type="button" className="edit-button" onClick={() => void editPartner(partner)}>Edit</button></td></tr>)}</tbody></table></div>
+            <tbody>{partners.filter((partner) => partner.partnerType === partnerTypeFilter).map((partner) => <tr key={partner.id}><td><strong>{partner.name}</strong>{MEXICAN_STATES.some((s) => s.code === partner.stateCode) && <span style={{marginLeft:"0.4rem",fontSize:"0.65rem",fontWeight:700,background:"#16a34a",color:"#fff",borderRadius:"3px",padding:"1px 5px",verticalAlign:"middle",letterSpacing:"0.05em"}}>MX</span>}</td><td>{partner.pacaNumber || "Pendiente"}</td><td>{partner.taxId || "Pendiente"}</td><td>{partner.blueBookNumber || "Pendiente"}</td><td>{partner.dunsNumber || "Pendiente"}</td><td><strong>{[partner.street, partner.exteriorNumber && `#${partner.exteriorNumber}`, partner.interiorNumber && `Int. ${partner.interiorNumber}`].filter(Boolean).join(" ") || "Pendiente"}</strong><small>{partner.city}, {partner.stateCode} {partner.postalCode}</small></td>{partnerTypeFilter === "CUSTOMER" && <td><strong>{partner.buyerName || "Pendiente"}</strong><small>{partner.buyerEmail || ""}{partner.buyerOfficePhone ? ` ?? ${formatPhone(partner.buyerOfficePhone)}` : ""}</small></td>}<td><strong>{partner.contactName}</strong><small>{partner.contactEmail} ?? {formatPhone(partner.contactPhone)}</small></td><td><button type="button" className="edit-button" onClick={() => void editPartner(partner)}>Edit</button></td></tr>)}</tbody></table></div>
           {partners.filter((partner) => partner.partnerType === partnerTypeFilter).length === 0 && <div className="catalog-empty"><strong>Aún no hay {partnerTypeFilter === "SUPPLIER" ? "proveedores" : "clientes"} registrados</strong><span>Usa el botón de alta para crear el primer registro.</span></div>}
         </section>}
       </section>}
@@ -2562,18 +2574,42 @@ export default function UsaDashboard({ initialSales = [] }: { initialSales?: Sal
       {partnerModal && <div className={`modal-backdrop ${partnerTarget ? "modal-backdrop-elevated" : ""}`}><form className="sale-modal partner-modal" onSubmit={savePartner}>
         <div className="modal-heading"><div><p className="eyebrow">Catálogo USA</p><h2>{editingPartnerId ? "Editar" : "Alta de"} {partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}</h2><p className="modal-intro">Los campos marcados con * son obligatorios. Los demás pueden agregarse o modificarse después.</p></div></div>
         <label className="dual-role-check"><input type="checkbox" checked={alsoOppositeType} onChange={(e) => setAlsoOppositeType(e.target.checked)} /><span><strong>{partnerModal === "SUPPLIER" ? "También es cliente" : "También es proveedor"}</strong><small>Al guardar, la empresa se agregará automáticamente en ambos catálogos.</small></span></label>
+        <label className="dual-role-check"><input type="checkbox" checked={isMexicanPartner} onChange={(e) => { setIsMexicanPartner(e.target.checked); setPartnerForm((f) => ({ ...f, stateCode: "", stateName: "", city: "", postalCode: "" })); }} /><span><strong>Empresa mexicana</strong><small>Activa esto para registrar un proveedor con RFC y dirección de México.</small></span></label>
         <section className="form-section partner-section"><div className="form-section-heading"><span>1</span><div><h3>Información fiscal y comercial</h3></div></div><div className="form-grid partner-grid">
-          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>{(partnerModal === "CUSTOMER" || alsoOppositeType) && <><label>Vendedor *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName}</option>)}</select></label><label className="client-profit-field">% de utilidad del cliente<input min="0" max="100" step="0.01" type="number" value={partnerForm.profitPercentage} onChange={(e) => setPartnerForm({...partnerForm, profitPercentage:e.target.value})} /><small>Porcentaje para el vendedor asignado. El porcentaje restante se divide en partes iguales para RR y GM.</small></label></>}
+          <label className="span-2">Nombre *<input required value={partnerForm.name} onChange={(e) => setPartnerForm({...partnerForm, name:e.target.value})} /></label>
+          {isMexicanPartner
+            ? <label>RFC<input value={partnerForm.taxId} placeholder="Ej. XAXX010101000" pattern="[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}" title="RFC válido: 3-4 letras, 6 dígitos de fecha, 3 caracteres alfanuméricos" onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value.toUpperCase()})} /></label>
+            : <><label>PACA #<input value={partnerForm.pacaNumber} onChange={(e) => setPartnerForm({...partnerForm, pacaNumber:e.target.value})} /></label><label>TAX ID #<input value={partnerForm.taxId} onChange={(e) => setPartnerForm({...partnerForm, taxId:e.target.value})} /></label><label>BLUE BOOK #<input value={partnerForm.blueBookNumber} onChange={(e) => setPartnerForm({...partnerForm, blueBookNumber:e.target.value})} /></label><label>DUNS and BRADSTREET #<input value={partnerForm.dunsNumber} onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label></>}
+          {(partnerModal === "CUSTOMER" || alsoOppositeType) && <><label>Vendedor *<select required value={partnerForm.assignedSeller} onChange={(e) => setPartnerForm({...partnerForm, assignedSeller:e.target.value})}><option value="">Selecciona un vendedor</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.fullName}>{user.fullName}</option>)}</select></label><label className="client-profit-field">% de utilidad del cliente<input min="0" max="100" step="0.01" type="number" value={partnerForm.profitPercentage} onChange={(e) => setPartnerForm({...partnerForm, profitPercentage:e.target.value})} /><small>Porcentaje para el vendedor asignado. El porcentaje restante se divide en partes iguales para RR y GM.</small></label></>}
         </div></section>
-        <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3><p>Selecciona primero el estado para habilitar sus ciudades.</p></div></div><div className="form-grid partner-grid">
-          <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label><label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label><label>Calle<input value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label><label>Número exterior<input value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label><label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label><label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
+        <section className="form-section address-section"><div className="form-section-heading"><span>2</span><div><h3>Dirección</h3>{!isMexicanPartner && <p>Selecciona primero el estado para habilitar sus ciudades.</p>}</div></div><div className="form-grid partner-grid">
+          {isMexicanPartner ? <>
+            <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => { const s = MEXICAN_STATES.find((x) => x.code === e.target.value); setPartnerForm((f) => ({ ...f, stateCode: e.target.value, stateName: s?.name ?? "", city: "" })); }}><option value="">Selecciona un estado</option>{MEXICAN_STATES.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</select></label>
+            <label>Ciudad *<input required value={partnerForm.city} placeholder="Ciudad o municipio" onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})} /></label>
+            <label>Calle *<input required value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label>
+            <label>Número exterior *<input required value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label>
+            <label>Número interior / Depto<input value={partnerForm.interiorNumber} placeholder="Depto, local, etc." onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label>
+            <label>Colonia<input value={partnerForm.dunsNumber} placeholder="Colonia o fraccionamiento" onChange={(e) => setPartnerForm({...partnerForm, dunsNumber:e.target.value})} /></label>
+            <label>Código postal *<input required pattern="[0-9]{5}" maxLength={5} inputMode="numeric" placeholder="00000" value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value.replace(/\D/g, "")})} /></label>
+          </> : <>
+            <label>Estado *<select required value={partnerForm.stateCode} onChange={(e) => void changePartnerState(e.target.value)}><option value="">Selecciona un estado</option>{states.map((state) => <option key={state.code} value={state.code}>{state.name}</option>)}</select></label>
+            <label>Ciudad *<select required disabled={!partnerForm.stateCode || citiesLoading} value={partnerForm.city} onChange={(e) => setPartnerForm({...partnerForm, city:e.target.value})}><option value="">{citiesLoading ? "Cargando ciudades…" : partnerForm.stateCode ? "Selecciona una ciudad" : "Selecciona primero el estado"}</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></label>
+            <label>Calle<input value={partnerForm.street} onChange={(e) => setPartnerForm({...partnerForm, street:e.target.value})} /></label>
+            <label>Número exterior<input value={partnerForm.exteriorNumber} onChange={(e) => setPartnerForm({...partnerForm, exteriorNumber:e.target.value})} /></label>
+            <label>Número interior<input value={partnerForm.interiorNumber} onChange={(e) => setPartnerForm({...partnerForm, interiorNumber:e.target.value})} /></label>
+            <label>P.O. / ZIP Code *<input required value={partnerForm.postalCode} onChange={(e) => setPartnerForm({...partnerForm, postalCode:e.target.value})} /></label>
+          </>}
         </div></section>
         {(partnerModal === "CUSTOMER" || alsoOppositeType) && <section className="form-section buyer-section"><div className="form-section-heading"><span>3</span><div><h3>Datos de comprador</h3></div></div><div className="form-grid partner-grid">
           <label>Nombre del comprador<input value={partnerForm.buyerName} onChange={(e) => setPartnerForm({...partnerForm, buyerName:e.target.value})} /></label><label>Correo<input type="email" value={partnerForm.buyerEmail} onChange={(e) => setPartnerForm({...partnerForm, buyerEmail:e.target.value})} /></label><label>Teléfono oficina<input type="tel" inputMode="numeric" maxLength={14} placeholder="(XXX)-XXX-XXXX" value={formatPhone(partnerForm.buyerOfficePhone)} onChange={(e) => setPartnerForm({...partnerForm, buyerOfficePhone:digitsOnly(e.target.value)})} /></label><label>Extensión<input value={partnerForm.buyerOfficeExtension} onChange={(e) => setPartnerForm({...partnerForm, buyerOfficeExtension:e.target.value})} /></label><label>Celular<input type="tel" inputMode="numeric" maxLength={14} placeholder="(XXX)-XXX-XXXX" value={formatPhone(partnerForm.buyerMobilePhone)} onChange={(e) => setPartnerForm({...partnerForm, buyerMobilePhone:digitsOnly(e.target.value)})} /></label>
           <label className="dual-role-check span-2"><input type="checkbox" onChange={(e) => { if (e.target.checked) setPartnerForm((current) => ({ ...current, contactName: current.buyerName, contactEmail: current.buyerEmail, contactPhone: current.buyerOfficePhone || current.buyerMobilePhone })); }} /><span><strong>Contacto para pagos/cobros igual al comprador</strong></span></label>
         </div></section>}
         <section className="form-section contact-section"><div className="form-section-heading"><span>{partnerModal === "CUSTOMER" || alsoOppositeType ? "4" : "3"}</span><div><h3>Contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"}</h3></div></div><div className="form-grid partner-grid">
-          <label>Nombre de contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required value={partnerForm.contactName} onChange={(e) => setPartnerForm({...partnerForm, contactName:e.target.value})} /></label><label>Correo para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="email" value={partnerForm.contactEmail} onChange={(e) => setPartnerForm({...partnerForm, contactEmail:e.target.value})} /></label><label>Teléfono para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="tel" inputMode="numeric" maxLength={14} minLength={14} pattern="\([0-9]{3}\)-[0-9]{3}-[0-9]{4}" title="Formato (XXX)-XXX-XXXX" placeholder="(XXX)-XXX-XXXX" value={formatPhone(partnerForm.contactPhone)} onChange={(e) => setPartnerForm({...partnerForm, contactPhone:digitsOnly(e.target.value)})} /></label>
+          <label>Nombre de contacto para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required value={partnerForm.contactName} onChange={(e) => setPartnerForm({...partnerForm, contactName:e.target.value})} /></label>
+          <label>Correo para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="email" value={partnerForm.contactEmail} onChange={(e) => setPartnerForm({...partnerForm, contactEmail:e.target.value})} /></label>
+          {isMexicanPartner
+            ? <label>Teléfono para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required value={partnerForm.contactPhone} placeholder="10 dígitos sin espacios" onChange={(e) => setPartnerForm({...partnerForm, contactPhone:digitsOnly(e.target.value)})} /></label>
+            : <label>Teléfono para {partnerModal === "SUPPLIER" ? "pagos" : "cobros"} *<input required type="tel" inputMode="numeric" maxLength={14} minLength={14} pattern="\([0-9]{3}\)-[0-9]{3}-[0-9]{4}" title="Formato (XXX)-XXX-XXXX" placeholder="(XXX)-XXX-XXXX" value={formatPhone(partnerForm.contactPhone)} onChange={(e) => setPartnerForm({...partnerForm, contactPhone:digitsOnly(e.target.value)})} /></label>}
         </div></section>
         {partnerSaveState && <p className="form-message">{partnerSaveState}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setPartnerModal(null); setPartnerTarget(null); }}>Cancelar</button><button type="submit" className="primary-button">{editingPartnerId ? "Guardar cambios" : `Registrar ${partnerModal === "SUPPLIER" ? "proveedor" : "cliente"}`}</button></div>
       </form></div>}

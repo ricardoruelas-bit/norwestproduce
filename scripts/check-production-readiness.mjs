@@ -1,3 +1,15 @@
+import { existsSync } from "node:fs";
+import { loadEnvFile } from "node:process";
+
+if (existsSync(".env.local")) {
+  try {
+    loadEnvFile(".env.local");
+  } catch {
+    console.error("No fue posible leer .env.local. Revisa su formato.");
+    process.exit(1);
+  }
+}
+
 const required = [
   {
     name: "DATABASE_URL",

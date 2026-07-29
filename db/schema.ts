@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, doublePrecision, index, integer, pgTable, serial, text } from "drizzle-orm/pg-core";
+import { bigint, boolean, doublePrecision, index, integer, pgTable, primaryKey, serial, text } from "drizzle-orm/pg-core";
 
 export const inventoryLots = pgTable(
   "inventory_lots",
@@ -224,4 +224,24 @@ export const sellerLiquidations = pgTable(
     index("seller_liquidations_org_seller_idx").on(table.organizationCode, table.sellerName),
     index("seller_liquidations_org_date_idx").on(table.organizationCode, table.liquidationDate),
   ],
+);
+
+export const documentCounters = pgTable(
+  "document_counters",
+  {
+    organizationCode: text("organization_code").notNull(),
+    documentType: text("document_type").notNull(),
+    lastValue: integer("last_value").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP::text`),
+  },
+  (table) => [primaryKey({ columns: [table.organizationCode, table.documentType] })],
+);
+
+export const authRateLimits = pgTable(
+  "auth_rate_limits",
+  {
+    rateKey: text("rate_key").primaryKey(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    resetAt: bigint("reset_at", { mode: "number" }).notNull(),
+  },
 );

@@ -1,8 +1,12 @@
 import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { inventoryLots } from "../../../../db/schema";
+import { requireAnyPermission, requirePermission } from "../../../../lib/api-auth";
+import { clean } from "../../../../lib/auth";
 
 export async function GET(request: Request) {
+  const denied = requireAnyPermission(request, ["inventory", "sales_edit"]);
+  if (denied) return denied;
   try {
     const includeAll = new URL(request.url).searchParams.get("all") === "1";
     const db = await getDb();
@@ -15,10 +19,6 @@ export async function GET(request: Request) {
     const message = error instanceof Error ? error.message : "No fue posible consultar el inventario.";
     return Response.json({ error: message }, { status: 500 });
   }
-}
-
-function clean(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function inventoryItemsFromPayload(payload: Record<string, unknown>) {
@@ -47,6 +47,8 @@ function inventoryItemsFromPayload(payload: Record<string, unknown>) {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "inventory");
+  if (denied) return denied;
   try {
     const payload = await request.json() as Record<string, unknown>;
     const items = inventoryItemsFromPayload(payload);
@@ -141,6 +143,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const denied = requirePermission(request, "inventory");
+  if (denied) return denied;
   try {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id);
@@ -287,12 +291,12 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "Completa fecha de entrada, bodega, producto y cajas recibidas." }, { status: 400 });
     }
     const values = [purchasePrice, freightCost, mexicoCustomsCost, usCustomsCost, overweightCost, redLightCost, redLightUsCost, coldStorageCost, ...additionalExpenses.map((item) => item.amount)];
-    if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes vÃ¡lidos en los costos de importaciÃ³n." }, { status: 400 });
+    if (values.some((value) => !Number.isFinite(value) || value < 0)) return Response.json({ error: "Ingresa importes válidos en los costos de importación." }, { status: 400 });
     if (!exchangeRate || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
-      return Response.json({ error: "Ingresa el tipo de cambio vÃ¡lido de esta importaciÃ³n para calcular los totales en USD y MXN." }, { status: 400 });
+      return Response.json({ error: "Ingresa el tipo de cambio válido de esta importación para calcular los totales en USD y MXN." }, { status: 400 });
     }
     if ((boxesPerPallet != null && (!Number.isInteger(boxesPerPallet) || boxesPerPallet <= 0)) || (palletsPerLoad != null && (!Number.isInteger(palletsPerLoad) || palletsPerLoad <= 0))) {
-      return Response.json({ error: "Cajas por pallet y pallets por carga deben ser nÃºmeros enteros mayores que cero." }, { status: 400 });
+      return Response.json({ error: "Cajas por pallet y pallets por carga deben ser números enteros mayores que cero." }, { status: 400 });
     }
     if (totalBoxes < existing.totalBoxes - existing.availableBoxes) {
       return Response.json({ error: "El total no puede ser menor a las cajas ya vendidas de esta partida." }, { status: 409 });

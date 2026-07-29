@@ -1,10 +1,8 @@
 import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { coldStorages } from "../../../../db/schema";
-
-function clean(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
+import { requirePermission } from "../../../../lib/api-auth";
+import { clean } from "../../../../lib/auth";
 
 function normalizePayload(payload: Record<string, unknown>) {
   const name = clean(payload.name);
@@ -24,7 +22,9 @@ function isComplete(values: ReturnType<typeof normalizePayload>) {
   return values.name && values.street && values.exteriorNumber && values.stateCode && values.city && values.postalCode && values.phone.length === 10;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = requirePermission(request, "catalogs");
+  if (denied) return denied;
   try {
     const db = await getDb();
     const rows = await db.select().from(coldStorages)
@@ -37,6 +37,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "catalogs");
+  if (denied) return denied;
   try {
     const values = normalizePayload(await request.json() as Record<string, unknown>);
     if (!isComplete(values)) {
@@ -51,6 +53,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const denied = requirePermission(request, "catalogs");
+  if (denied) return denied;
   try {
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id);

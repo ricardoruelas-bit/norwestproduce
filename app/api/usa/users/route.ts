@@ -20,7 +20,9 @@ async function ensureDefaultAdminUser(db: Awaited<ReturnType<typeof getDb>>) {
   await db.insert(userAccounts).values({ organizationCode: "USA", fullName: DEFAULT_ADMIN_USER.fullName, alias: DEFAULT_ADMIN_USER.alias, email: DEFAULT_ADMIN_USER.email, passwordHash: DEFAULT_ADMIN_USER.passwordHash, permissions: DEFAULT_ADMIN_USER.permissions, profitPercentage: 0, active: true });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = requirePermission(request, "users");
+  if (denied) return denied;
   try {
     const db = await getDb();
     await ensureDefaultAdminUser(db);
@@ -34,13 +36,13 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const auth = await requirePermission(request, "users");
-    if ("response" in auth) return auth.response;
+    const denied = requirePermission(request, "users");
+    if (denied) return denied;
 
     const payload = await request.json() as Record<string, unknown>;
     const fullName = clean(payload.fullName), alias = clean(payload.alias), email = clean(payload.email).toLowerCase(), password = clean(payload.password);
     if (!fullName || !alias || !email || password.length < 8) return Response.json({ error: "Completa nombre, alias, correo y una contraseña de al menos 8 caracteres." }, { status: 400 });
-    if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
     const db = await getDb();
     const duplicate = await db.select({ id: userAccounts.id }).from(userAccounts).where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.alias, alias))).limit(1);
     if (duplicate.length) return Response.json({ error: "Ese alias ya está registrado." }, { status: 409 });
@@ -52,9 +54,9 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const denied = requirePermission(request, "users");
+  if (denied) return denied;
   try {
-    const auth = await requirePermission(request, "users");
-    if ("response" in auth) return auth.response;
 
     const payload = await request.json() as Record<string, unknown>;
     const id = Number(payload.id), fullName = clean(payload.fullName), alias = clean(payload.alias), email = clean(payload.email).toLowerCase();

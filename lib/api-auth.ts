@@ -1,69 +1,39 @@
-import { and, eq } from "drizzle-orm";
-import { getDb } from "../db";
-import { userAccounts } from "../db/schema";
-import { ALL_USER_PERMISSIONS, DEFAULT_ADMIN_USER, safeUser } from "./auth";
-import { verifySessionToken } from "./session";
+import { ALL_USER_PERMISSIONS } from "./auth";
 
-type Permission = (typeof ALL_USER_PERMISSIONS)[number];
+export type Permission = (typeof ALL_USER_PERMISSIONS)[number];
 
-function cookieValue(header: string | null, name: string) {
-  return (header || "")
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${name}=`))
-    ?.slice(name.length + 1);
-}
-
-function parsePermissions(value: string) {
+function parsePermissions(value: string | null): Permission[] {
+  if (!value) return [];
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((item): item is Permission => ALL_USER_PERMISSIONS.includes(item as Permission)) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is Permission => ALL_USER_PERMISSIONS.includes(item as Permission))
+      : [];
   } catch {
     return [];
   }
 }
 
-async function currentUser(request: Request) {
-  const token = cookieValue(request.headers.get("cookie"), "norwest_session");
-  if (!token) return null;
-
-  const email = await verifySessionToken(token);
-  if (!email) return null;
-
-  try {
-    const db = await getDb();
-    const [user] = await db
-      .select()
-      .from(userAccounts)
-      .where(and(eq(userAccounts.organizationCode, "USA"), eq(userAccounts.email, email.toLowerCase()), eq(userAccounts.active, true)))
-      .limit(1);
-    return user || null;
-  } catch (error) {
-    if (email.toLowerCase() === DEFAULT_ADMIN_USER.email) return DEFAULT_ADMIN_USER;
-    throw error;
+/**
+ * Returns a 403 Response if the request does not have the required permission, or null if it passes.
+ * Reads permissions from the x-session-permissions header set by middleware.ts.
+ */
+export function requirePermission(request: Request, permission: Permission): Response | null {
+  const perms = parsePermissions(request.headers.get("x-session-permissions"));
+  if (!perms.includes(permission)) {
+    return Response.json({ error: "No tienes permiso para realizar esta accion." }, { status: 403 });
   }
+  return null;
 }
 
-export async function requirePermission(request: Request, permission: Permission) {
-  const user = await currentUser(request);
-  if (!user) return { response: Response.json({ error: "No autorizado." }, { status: 401 }) };
-
-  const permissions = parsePermissions(user.permissions);
-  if (!permissions.includes(permission)) {
-    return { response: Response.json({ error: "No tienes permiso para realizar esta accion." }, { status: 403 }) };
+/**
+ * Returns a 403 Response if the request does not have at least one of the given permissions, or null if it passes.
+ * Reads permissions from the x-session-permissions header set by middleware.ts.
+ */
+export function requireAnyPermission(request: Request, allowed: Permission[]): Response | null {
+  const perms = parsePermissions(request.headers.get("x-session-permissions"));
+  if (!allowed.some((p) => perms.includes(p))) {
+    return Response.json({ error: "No tienes permiso para consultar esta informacion." }, { status: 403 });
   }
-
-  return { user: safeUser(user), permissions };
-}
-
-export async function requireAnyPermission(request: Request, allowed: Permission[]) {
-  const user = await currentUser(request);
-  if (!user) return { response: Response.json({ error: "No autorizado." }, { status: 401 }) };
-
-  const permissions = parsePermissions(user.permissions);
-  if (!allowed.some((permission) => permissions.includes(permission))) {
-    return { response: Response.json({ error: "No tienes permiso para consultar esta informacion." }, { status: 403 }) };
-  }
-
-  return { user: safeUser(user), permissions };
+  return null;
 }

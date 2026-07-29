@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { sales } from "../../../../db/schema";
 import type { InvoiceAdjustment, InvoiceItem } from "../../../../lib/types";
+import { requirePermission } from "../../../../lib/api-auth";
 
 const REASONS = new Set(["CAMBIO DE PRECIO", "CALIDAD", "RECHAZO PARCIAL", "PRODUCTO ELIMINADO", "CARGA POR ERROR", "OTRO"]);
 
@@ -22,6 +23,8 @@ function validItems(value: unknown): value is InvoiceItem[] {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "invoicing");
+  if (denied) return denied;
   try {
     const payload = await request.json() as Record<string, unknown>;
     const saleId = Number(payload.saleId);

@@ -1,6 +1,7 @@
-import { and, eq, isNotNull } from "drizzle-orm";
-import { getBucket, getDb } from "../../../../db";
+import { and, eq, isNull } from "drizzle-orm";
+import { getBucket, getDb, nextInvoiceNumber } from "../../../../db";
 import { sales } from "../../../../db/schema";
+import { requireAnyPermission, requirePermission } from "../../../../lib/api-auth";
 import type { InvoiceItem } from "../../../../lib/types";
 
 const MAX_BOL_BYTES = 10 * 1024 * 1024;
@@ -20,9 +21,9 @@ function safeDownloadName(value: string) {
   return value.replace(/[\r\n"\\]/g, "_");
 }
 
-function currentDateInMazatlan() {
+function currentDateInMcAllen() {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Mazatlan",
+    timeZone: "America/Chicago",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -32,6 +33,8 @@ function currentDateInMazatlan() {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "invoicing");
+  if (denied) return denied;
   let uploadedKey: string | null = null;
   try {
     const formData = await request.formData();
@@ -52,12 +55,9 @@ export async function POST(request: Request) {
     if (existing.canceledAt) return Response.json({ error: "Una venta cancelada no puede facturarse." }, { status: 409 });
     if (existing.invoiceNumber) return Response.json({ error: "Esta venta ya fue facturada." }, { status: 409 });
     if (!existing.pickupDate) return Response.json({ error: "Registra una fecha de pickup anterior a hoy para poder facturar." }, { status: 409 });
-    if (existing.pickupDate >= currentDateInMazatlan()) return Response.json({ error: "No se puede facturar un pickup programado para hoy o para una fecha futura." }, { status: 409 });
+    if (existing.pickupDate >= currentDateInMcAllen()) return Response.json({ error: "No se puede facturar un pickup programado para hoy o para una fecha futura." }, { status: 409 });
 
-    const invoiceRows = await db.select({ invoiceNumber: sales.invoiceNumber }).from(sales)
-      .where(and(eq(sales.organizationCode, "USA"), isNotNull(sales.invoiceNumber)));
-    const highest = invoiceRows.reduce((max, row) => Math.max(max, Number(String(row.invoiceNumber || "").match(/\d+/)?.[0] || 0)), 0);
-    const invoiceNumber = String(highest + 1).padStart(4, "0");
+    const invoiceNumber = await nextInvoiceNumber("USA");
     const extension = bol.type === "application/pdf" ? "pdf" : bol.type.split("/")[1] || "bin";
     uploadedKey = `usa/bol/${saleId}/${crypto.randomUUID()}.${extension}`;
     try {
@@ -96,7 +96,16 @@ export async function POST(request: Request) {
       salePrice: normalized.length === 1 ? normalized[0].unitPrice : null,
       total,
       profit,
-    }).where(and(eq(sales.id, saleId), eq(sales.organizationCode, "USA"))).returning();
+    }).where(and(
+      eq(sales.id, saleId),
+      eq(sales.organizationCode, "USA"),
+      isNull(sales.invoiceNumber),
+      isNull(sales.canceledAt),
+    )).returning();
+    if (!updated) {
+      if (uploadedKey) await getBucket().delete(uploadedKey).catch(() => undefined);
+      return Response.json({ error: "Esta venta fue facturada por otra solicitud." }, { status: 409 });
+    }
     return Response.json({ sale: updated }, { status: 201 });
   } catch (error) {
     if (uploadedKey) {
@@ -111,6 +120,8 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const denied = requireAnyPermission(request, ["invoicing", "sales_view"]);
+  if (denied) return denied;
   try {
     const saleId = Number(new URL(request.url).searchParams.get("saleId"));
     if (!Number.isInteger(saleId) || saleId <= 0) return Response.json({ error: "Venta inválida." }, { status: 400 });

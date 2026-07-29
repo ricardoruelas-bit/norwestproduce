@@ -1,12 +1,13 @@
 import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { products } from "../../../../db/schema";
+import { requirePermission } from "../../../../lib/api-auth";
+import { clean } from "../../../../lib/auth";
 
-function clean(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = requirePermission(request, "catalogs");
+  if (denied) return denied;
   try {
     const db = await getDb();
     const rows = await db.select().from(products)
@@ -19,6 +20,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const denied = requirePermission(request, "catalogs");
+  if (denied) return denied;
   try {
     const payload = await request.json() as Record<string, unknown>;
     if (!clean(payload.name)) return Response.json({ error: "Ingresa el nombre del producto." }, { status: 400 });
